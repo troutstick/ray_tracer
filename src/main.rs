@@ -142,7 +142,7 @@ impl Camera {
         Camera { pos, pitch, yaw, view_plane }
     }
 
-    fn iterate_over_rays(&self, triangles: &Vec<Triangle>) {
+    fn iterate_over_rays(&self, triangles: &Vec<Triangle>) -> Vec<f64> {
 
         // Find the corresponding plane for every triangle
         let triangle_planes: Vec<Plane> = triangles
@@ -163,6 +163,7 @@ impl Camera {
         let i_center = (res_width - 1) / 2;
         let j_center = (res_height - 1) / 2;
 
+        let mut flattened_brightnesses = Vec::with_capacity(res_height * res_width);
         for i in 0..res_width {
             for j in 0..res_height {
                 // direction of ray
@@ -172,20 +173,44 @@ impl Camera {
                     dz: 1.0,
                 }.yaw(self.yaw).pitch(self.pitch);
 
-                for (plane, (bounding_box, triangle)) in triangle_planes.iter().zip(bounding_boxes.iter().zip(triangles.iter())) {
-                    // deconstruct plane
-                    let (a,b,c,k) = (plane.a, plane.b, plane.c, plane.k);
-                    let abc_vect = Vector::new(a,b,c);
+                // initialize distance of triangle to infinity
+                let mut min_dist_sq = f64::INFINITY;
 
-                    let lambda = -(abc_vect.dot_product(self.pos) + k) / abc_vect.dot_product(m);
+                // filter for all triangles that the ray intersects
+                for (plane, (bounding_box, t)) in triangle_planes.iter().zip(bounding_boxes.iter().zip(triangles.iter())) {
 
-                    let intersection = m.scale(lambda) + self.pos;
+                    let intersect = {
+                        // deconstruct plane
+                        let (a,b,c,k) = (plane.a, plane.b, plane.c, plane.k);
+                        let abc_vect = Vector::new(a,b,c);
+                        let lambda = -(abc_vect.dot_product(self.pos) + k) / abc_vect.dot_product(m);
+                        m.scale(lambda) + self.pos
+                    };
 
-                    if bounding_box.intersects(intersection) {
+                    // NOT actual magnitude
+                    let new_dist_sq = intersect.squared_magnitude();
+
+                    if new_dist_sq < min_dist_sq { // only look at closest triangle (no transparency)
+                        if bounding_box.intersects(intersect) // fast initial check
+                            && Vector::same_side(intersect, t.v1, t.v2, t.v3)
+                            && Vector::same_side(intersect, t.v2, t.v1, t.v3)
+                            && Vector::same_side(intersect, t.v3, t.v1, t.v2) {
+                            min_dist_sq = new_dist_sq;
+                        }
                     }
                 }
+
+                // add brightness to pixel
+                flattened_brightnesses.push(
+                    if min_dist_sq == f64::INFINITY {
+                            0.0
+                        } else {
+                            1.0 / min_dist_sq.sqrt()
+                        }
+                );
             }
         }
+        flattened_brightnesses
     }
 }
 
@@ -254,9 +279,20 @@ impl Vector {
         }
     }
 
-    /// Return true if v1 and v2 are both on the same side of self.
-    fn same_side(&self, v1: Self, v2: Self) -> bool {
-        unimplemented!();
+    fn squared_magnitude(&self) -> f64 {
+        self.dx.powi(2) + self.dy.powi(2) + self.dz.powi(2)
+    }
+
+    fn magnitude(&self) -> f64 {
+        self.squared_magnitude().sqrt()
+    }
+
+    /// Return true if p1 and p2 are both on the same side of v1 -> v2.
+    fn same_side(p1: Vector, p2: Vector, v1: Vector, v2: Vector) -> bool {
+        let v = v2 - v1;
+        let a = v.cross_product(p1 - v2);
+        let b = v.cross_product(p2 - v2);
+        a.dot_product(b) > 0.0
     }
 }
 
