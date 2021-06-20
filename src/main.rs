@@ -34,9 +34,10 @@ fn write_pixels_to_ppm(camera: &Camera, pixels: &Vec<f64>, mut writer: BufWriter
     let num_rows = camera.view_plane.res_height;
     writer.write(format!("P3\n{} {}\n255\n", num_cols, num_rows).as_bytes()).unwrap();
     for p in pixels {
-        let r = *p;
-        let g = *p;
-        let b = *p;
+        let p = ((*p) * 255.0) as isize;
+        let r = p;
+        let g = p;
+        let b = p;
         let s = format!("{} {} {}\n", r, g, b);
         writer.write(s.as_bytes()).unwrap();
     }
@@ -108,22 +109,19 @@ fn main() {
         .map(get_vertices)
         .collect();
 
-    println!("{:?}", triangles.len());
+    // println!("{:?}", triangles.len());
 
-    // let camera = Camera::new();
-    // let pixel_brightnesses = camera.iterate_over_rays(&triangles);
-    // let nonzero_pixels = pixel_brightnesses
-    //     .iter()
-    //     .filter(|f|**f != 0.0)
-    //     .map(|f| *f)
-    //     .collect::<Vec<f64>>();
+    let mut camera = Camera::new();
+    for i in 0..6 {
+        let pixel_brightnesses = camera.iterate_over_rays(&triangles);
 
-    // println!("{:?}", nonzero_pixels);
+        let f = File::create(format!("{}/test{}.ppm", OUTPUT_FOLDER, i)).expect("Unable to create file");
+        let f = BufWriter::new(f);
 
-    // create test output
-    let f = File::create(format!("{}/test.ppm", OUTPUT_FOLDER)).expect("Unable to create file");
-    let f = BufWriter::new(f);
-    write_ppm_file(f);
+        write_pixels_to_ppm(&camera, &pixel_brightnesses, f);
+
+        camera.pitch.0 += 0.1;
+    }
 }
 
 fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
@@ -184,15 +182,9 @@ struct BoundingBox {
 impl BoundingBox {
     /// Determine if a vector intersects this bounding box.
     fn intersects(&self, v: Vector) -> bool {
-        if
         v.dx > self.min_x && v.dx < self.max_x
         && v.dy > self.min_y && v.dy < self.max_y
-        && v.dz > self.min_z && v.dz < self.max_z {
-            print!(".");
-            true
-        } else {
-            false
-        }
+        && v.dz > self.min_z && v.dz < self.max_z
     }
 }
 
@@ -228,9 +220,13 @@ struct Camera {
 impl Camera {
     /// Default camera.
     fn new() -> Camera {
-        let pos = Vector::new(7.35889, -6.92579 , 4.95831);
-        let pitch = Radian(1.104793);
-        let yaw = Radian(0.8150688);
+        // let pos = Vector::new(7.35889, -6.92579 , 4.95831);
+        // let pitch = Radian(1.104793);
+        // let yaw = Radian(0.8150688);
+
+        let pos = Vector::new(0.0, 0.0, -10.0);
+        let pitch = Radian(0.1);
+        let yaw = Radian(0.0);
         let view_plane = ViewPlane {
             pixel_size: 0.0025,
             res_height: 200,
