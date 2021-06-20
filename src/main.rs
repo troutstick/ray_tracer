@@ -1,6 +1,8 @@
 use std::fs::{File, create_dir_all};
-use std::io::{BufWriter, Write};
+use std::io::{BufWriter, Write, BufRead};
 use std::ops::{Sub, Add};
+use std::path::Path;
+use std::io;
 
 const IMAGES_FOLDER: &str = "./images";
 const OUTPUT_FOLDER: &str = "./images/output";
@@ -27,17 +29,107 @@ fn write_ppm_file(mut writer: BufWriter<File>) {
     writer.flush().unwrap();
 }
 
+fn write_pixels_to_ppm(camera: &Camera, pixels: &Vec<f64>, mut writer: BufWriter<File>) {
+    let num_cols = camera.view_plane.res_width;
+    let num_rows = camera.view_plane.res_height;
+    writer.write(format!("P3\n{} {}\n255\n", num_cols, num_rows).as_bytes()).unwrap();
+    for p in pixels {
+        let r = *p;
+        let g = *p;
+        let b = *p;
+        let s = format!("{} {} {}\n", r, g, b);
+        writer.write(s.as_bytes()).unwrap();
+    }
+    writer.flush().unwrap();
+}
 
 fn main() {
     create_dir_all(OUTPUT_FOLDER).unwrap();
     create_dir_all(INPUT_FOLDER).unwrap();
 
+    let input_path = format!("{}/teapot.obj", INPUT_FOLDER);
 
+    let mut vertex_coords = Vec::new();
+    let mut faces = Vec::new();
+
+    if let Ok(lines) = read_lines(input_path) {
+        for line in lines {
+            if let Ok(s) = line {
+                let mut line_iter = s.split_ascii_whitespace();
+                if let Some(first_word) = line_iter.next() {
+                    match first_word {
+                        "v" => {
+                            let coords: Vec<f64> = line_iter
+                                .map(|s| s.parse::<f64>().unwrap())
+                                .collect();
+                            if coords.len() != 3 {
+                                panic!("unable to parse non 3d coordinates");
+                            }
+                            vertex_coords.push(coords);
+                        },
+                        "f" => {
+                            let vertices: Vec<usize> = line_iter
+                                .map(|s| s.parse::<usize>().unwrap())
+                                .map(|i| i-1) // normalize into 0 index
+                                .collect();
+                            if vertices.len() != 3 {
+                                panic!("unable to parse non-triangle polygons");
+                            }
+                            faces.push(vertices);
+                        },
+                        _ => panic!("only v and f lines readable in `.obj` files"),
+                    }
+                }
+            }
+        }
+    }
+
+    // println!("{:?}", vertex_coords);
+    // println!("{:?}", faces);
+
+    let get_3d_vect = |coord: &Vec<f64>| -> Vector {
+        Vector {
+            dx: coord[0],
+            dy: coord[1],
+            dz: coord[2],
+        }
+    };
+
+    let get_vertices = |face: &Vec<usize>| -> Triangle {
+        Triangle {
+            v1: get_3d_vect(&vertex_coords[face[0]]),
+            v2: get_3d_vect(&vertex_coords[face[1]]),
+            v3: get_3d_vect(&vertex_coords[face[2]]),
+        }
+    };
+
+    let triangles: Vec<Triangle> = faces
+        .iter()
+        .map(get_vertices)
+        .collect();
+
+    println!("{:?}", triangles.len());
+
+    // let camera = Camera::new();
+    // let pixel_brightnesses = camera.iterate_over_rays(&triangles);
+    // let nonzero_pixels = pixel_brightnesses
+    //     .iter()
+    //     .filter(|f|**f != 0.0)
+    //     .map(|f| *f)
+    //     .collect::<Vec<f64>>();
+
+    // println!("{:?}", nonzero_pixels);
 
     // create test output
     let f = File::create(format!("{}/test.ppm", OUTPUT_FOLDER)).expect("Unable to create file");
     let f = BufWriter::new(f);
     write_ppm_file(f);
+}
+
+fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
+    where P: AsRef<Path>, {
+    let file = File::open(filename)?;
+    Ok(io::BufReader::new(file).lines())
 }
 
 /// A triangle represented with its 3 vertices.
@@ -92,9 +184,15 @@ struct BoundingBox {
 impl BoundingBox {
     /// Determine if a vector intersects this bounding box.
     fn intersects(&self, v: Vector) -> bool {
+        if
         v.dx > self.min_x && v.dx < self.max_x
         && v.dy > self.min_y && v.dy < self.max_y
-        && v.dz > self.min_z && v.dz < self.max_z
+        && v.dz > self.min_z && v.dz < self.max_z {
+            print!(".");
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -160,12 +258,12 @@ impl Camera {
         let res_width = vp.res_width;
 
         // Get index of center pixel
-        let i_center = (res_width - 1) / 2;
-        let j_center = (res_height - 1) / 2;
+        let i_center = ((res_width - 1) / 2) as isize;
+        let j_center = ((res_height - 1) / 2) as isize;
 
         let mut flattened_brightnesses = Vec::with_capacity(res_height * res_width);
-        for i in 0..res_width {
-            for j in 0..res_height {
+        for i in 0..res_width as isize {
+            for j in 0..res_height as isize {
                 // direction of ray
                 let m = Vector {
                     dx: vp.pixel_size * ((i - i_center) as f64),
@@ -187,6 +285,7 @@ impl Camera {
                         m.scale(lambda) + self.pos
                     };
 
+
                     // NOT actual magnitude
                     let new_dist_sq = intersect.squared_magnitude();
 
@@ -196,6 +295,7 @@ impl Camera {
                             && Vector::same_side(intersect, t.v2, t.v1, t.v3)
                             && Vector::same_side(intersect, t.v3, t.v1, t.v2) {
                             min_dist_sq = new_dist_sq;
+                            print!(".");
                         }
                     }
                 }
