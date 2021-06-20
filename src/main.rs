@@ -1,6 +1,6 @@
 use std::fs::{File, create_dir_all};
 use std::io::{BufWriter, Write};
-use std::ops::Sub;
+use std::ops::{Sub, Add};
 
 const IMAGES_FOLDER: &str = "./images";
 const OUTPUT_FOLDER: &str = "./images/output";
@@ -98,6 +98,36 @@ impl Triangle {
             k: -cp.dot_product(self.v1.vectorize()),
         }
     }
+
+    fn bounding_box(&self) -> BoundingBox {
+        BoundingBox {
+            min_x: self.v1.x.min(self.v2.x.min(self.v3.x)),
+            max_x: self.v1.x.max(self.v2.x.max(self.v3.x)),
+            min_y: self.v1.y.min(self.v2.y.min(self.v3.y)),
+            max_y: self.v1.y.max(self.v2.y.max(self.v3.y)),
+            min_z: self.v1.z.min(self.v2.z.min(self.v3.z)),
+            max_z: self.v1.z.max(self.v2.z.max(self.v3.z)),
+        }
+    }
+}
+
+/// A triangle's min x, max x, min y, max y, min z, max z.
+struct BoundingBox {
+    min_x: f64,
+    max_x: f64,
+    min_y: f64,
+    max_y: f64,
+    min_z: f64,
+    max_z: f64,
+}
+
+impl BoundingBox {
+    /// Determine if a vector intersects this bounding box.
+    fn intersects(&self, v: Vector) -> bool {
+        v.dx > self.min_x && v.dx < self.max_x
+        && v.dy > self.min_y && v.dy < self.max_y
+        && v.dz > self.min_z && v.dz < self.max_z
+    }
 }
 
 /// A plane in 3d space; all points satisfy the equation:
@@ -123,7 +153,7 @@ struct ViewPlane {
 /// A camera, determined by position, pitch angle, yaw angle, and view plane.
 /// TODO: roll angle?
 struct Camera {
-    pos: Coordinate,
+    pos: Vector,
     pitch: Radian,
     yaw: Radian,
     view_plane: ViewPlane,
@@ -132,7 +162,7 @@ struct Camera {
 impl Camera {
     /// Default camera.
     fn new() -> Camera {
-        let pos = Coordinate::new(7.35889, -6.92579 , 4.95831);
+        let pos = Vector::new(7.35889, -6.92579 , 4.95831);
         let pitch = Radian(1.104793);
         let yaw = Radian(0.8150688);
         let view_plane = ViewPlane {
@@ -144,7 +174,19 @@ impl Camera {
         Camera { pos, pitch, yaw, view_plane }
     }
 
-    fn iterate_over_rays(&self) {
+    fn iterate_over_rays(&self, triangles: &Vec<Triangle>) {
+
+        // Find the corresponding plane for every triangle
+        let triangle_planes: Vec<Plane> = triangles
+            .iter()
+            .map(|t| t.plane())
+            .collect();
+
+        let bounding_boxes: Vec<BoundingBox> = triangles
+                .iter()
+                .map(|t| t.bounding_box())
+                .collect();
+
         let vp = &self.view_plane;
         let res_height = vp.res_height;
         let res_width = vp.res_width;
@@ -157,11 +199,23 @@ impl Camera {
             for j in 0..res_height {
                 // direction of ray
                 let m = Vector {
-                        dx: vp.pixel_size * ((i - i_center) as f64),
-                        dy: vp.pixel_size * ((j - j_center) as f64),
-                        dz: 1.0,
-                    }.yaw(self.yaw).pitch(self.pitch);
+                    dx: vp.pixel_size * ((i - i_center) as f64),
+                    dy: vp.pixel_size * ((j - j_center) as f64),
+                    dz: 1.0,
+                }.yaw(self.yaw).pitch(self.pitch);
 
+                for (plane, (bounding_box, triangle)) in triangle_planes.iter().zip(bounding_boxes.iter().zip(triangles.iter())) {
+                    // deconstruct plane
+                    let (a,b,c,k) = (plane.a, plane.b, plane.c, plane.k);
+                    let abc_vect = Vector::new(a,b,c);
+
+                    let lambda = -(abc_vect.dot_product(self.pos) + k) / abc_vect.dot_product(m);
+
+                    let intersection = m.scale(lambda) + self.pos;
+
+                    if bounding_box.intersects(intersection) {
+                    }
+                }
             }
         }
     }
@@ -220,6 +274,44 @@ impl Vector {
             dx: self.dx * r.cos() + self.dz * r.sin(),
             dy: self.dy,
             dz: -self.dx * r.sin() - self.dz * r.cos(),
+        }
+    }
+
+    /// Scale the vector by some scalar value n.
+    fn scale(&self, n: f64) -> Vector {
+        Vector {
+            dx: n * self.dx,
+            dy: n * self.dy,
+            dz: n * self.dz,
+        }
+    }
+
+    /// Return true if v1 and v2 are both on the same side of self.
+    fn same_side(&self, v1: Self, v2: Self) -> bool {
+        unimplemented!();
+    }
+}
+
+impl Sub for Vector {
+    type Output = Self;
+
+    fn sub(self, other: Self) -> Self {
+        Vector {
+            dx: self.dx - other.dx,
+            dy: self.dy - other.dy,
+            dz: self.dz - other.dz,
+        }
+    }
+}
+
+impl Add for Vector {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        Vector {
+            dx: self.dx + other.dx,
+            dy: self.dy + other.dy,
+            dz: self.dz + other.dz,
         }
     }
 }
