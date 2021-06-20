@@ -40,44 +40,12 @@ fn main() {
     write_ppm_file(f);
 }
 
-/// A point in 3D space.
-#[derive(Debug, Copy, Clone, PartialEq)]
-struct Coordinate {
-    x: f64,
-    y: f64,
-    z: f64,
-}
-
-impl Coordinate {
-    fn new(x: f64, y: f64, z: f64) -> Coordinate {
-        Coordinate { x, y, z }
-    }
-
-    /// Convert self into a vector
-    fn vectorize(&self) -> Vector {
-        Vector { dx: self.x, dy: self.y, dz: self.z, }
-    }
-}
-
-/// Subtraction on a coordinate gives you a vector.
-impl Sub for Coordinate {
-    type Output = Vector;
-
-    fn sub(self, other: Self) -> Vector {
-        Vector {
-            dx: self.x - other.x,
-            dy: self.y - other.y,
-            dz: self.z - other.z,
-        }
-    }
-}
-
 /// A triangle represented with its 3 vertices.
 #[derive(Debug, Copy, Clone, PartialEq)]
 struct Triangle {
-    v1: Coordinate,
-    v2: Coordinate,
-    v3: Coordinate,
+    v1: Vector,
+    v2: Vector,
+    v3: Vector,
 }
 
 impl Triangle {
@@ -95,18 +63,18 @@ impl Triangle {
             a: cp.dx,
             b: cp.dy,
             c: cp.dz,
-            k: -cp.dot_product(self.v1.vectorize()),
+            k: -cp.dot_product(self.v1),
         }
     }
 
     fn bounding_box(&self) -> BoundingBox {
         BoundingBox {
-            min_x: self.v1.x.min(self.v2.x.min(self.v3.x)),
-            max_x: self.v1.x.max(self.v2.x.max(self.v3.x)),
-            min_y: self.v1.y.min(self.v2.y.min(self.v3.y)),
-            max_y: self.v1.y.max(self.v2.y.max(self.v3.y)),
-            min_z: self.v1.z.min(self.v2.z.min(self.v3.z)),
-            max_z: self.v1.z.max(self.v2.z.max(self.v3.z)),
+            min_x: self.v1.dx.min(self.v2.dx.min(self.v3.dx)),
+            max_x: self.v1.dx.max(self.v2.dx.max(self.v3.dx)),
+            min_y: self.v1.dy.min(self.v2.dy.min(self.v3.dy)),
+            max_y: self.v1.dy.max(self.v2.dy.max(self.v3.dy)),
+            min_z: self.v1.dz.min(self.v2.dz.min(self.v3.dz)),
+            max_z: self.v1.dz.max(self.v2.dz.max(self.v3.dz)),
         }
     }
 }
