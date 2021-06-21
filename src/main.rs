@@ -213,6 +213,32 @@ impl BoundingBox {
         && v.dz >= self.min_z && v.dz <= self.max_z
     }
 
+    /// Determine if a vector intersects the top or bottom face.
+    #[inline]
+    #[allow(dead_code)]
+    fn top_bottom_check(&self, v: Vector) -> bool {
+        v.dx >= self.min_x && v.dx <= self.max_x
+        && v.dy >= self.min_y && v.dy <= self.max_y
+    }
+    
+    /// Determine if a vector intersects the left or right face.
+    #[inline]
+    #[allow(dead_code)]
+    fn left_right_check(&self, v: Vector) -> bool {
+        v.dx >= self.min_x && v.dx <= self.max_x
+        && v.dz >= self.min_z && v.dz <= self.max_z
+    }
+
+    /// Determine if a vector intersects the left or right face.
+    #[inline]
+    #[allow(dead_code)]
+    fn near_far_check(&self, v: Vector) -> bool {
+        v.dy >= self.min_y && v.dy <= self.max_y
+        && v.dz >= self.min_z && v.dz <= self.max_z
+
+    }
+    
+    
     /// Give the six planes that make up the box's sides.
     ///
     /// A diagram of each of the vertices:
@@ -245,8 +271,8 @@ impl BoundingBox {
         [
             Triangle::new(v2, v6, v4).plane(), // top plane
             Triangle::new(v5, v1, v7).plane(), // bottom plane
-            Triangle::new(v8, v4, v7).plane(), // right plane
             Triangle::new(v2, v6, v5).plane(), // left plane
+            Triangle::new(v8, v4, v7).plane(), // right plane
             Triangle::new(v7, v6, v5).plane(), // near plane
             Triangle::new(v2, v1, v4).plane(), // far plane
         ]
@@ -294,7 +320,8 @@ struct Scene {
 
     /// All triangles in the scene fall within this bounding box.
     scene_bounding_box: BoundingBox,
-    /// The six planes of the bounding box.
+    /// The six planes of the bounding box:
+    /// [top bottom left right near far]
     box_planes: [Plane; 6],
 }
 
@@ -426,7 +453,7 @@ impl Camera {
                     .map(get_intersection)
                     .map(|v| scene.scene_bounding_box.fast_intersect_check(v))
                     .any(|x| x);
-                    
+
 
                 if intersects_bounding_box {
                     // initialize distance of triangle to infinity
