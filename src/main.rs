@@ -67,7 +67,7 @@ fn main() {
         panic!("Failed to parse path. Did you enter a valid filename?");
     };
 
-    println!("num triangles: {:?}", triangles.len());
+    println!("Num triangles in scene: {:?}", triangles.len());
 
     let mut scene = Scene::new(triangles);
 
@@ -162,6 +162,16 @@ struct Triangle {
 impl Triangle {
     fn new(v1: Vector, v2: Vector, v3: Vector) -> Triangle {
         Triangle { v1, v2, v3 }
+    }
+
+    /// Compute the average squared distance between the triangle's vertices
+    /// and some target vector. Useful for judging distance to a triangle.
+    #[allow(dead_code)]
+    fn avg_dist_sq(&self, target: Vector) -> f64 {
+        ((self.v1 - target).squared_magnitude()
+        + (self.v2 - target).squared_magnitude()
+        + (self.v3 - target).squared_magnitude())
+        / 3.0
     }
 
     /// Give the plane that the triangle intersects.
