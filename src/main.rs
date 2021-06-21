@@ -152,7 +152,7 @@ fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
 }
 
 /// A triangle represented with its 3 vertices.
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 struct Triangle {
     v1: Vector,
     v2: Vector,
