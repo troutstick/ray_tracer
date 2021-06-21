@@ -33,20 +33,7 @@ fn write_ppm_file(mut writer: BufWriter<File>) {
     writer.flush().unwrap();
 }
 
-fn write_pixels_to_ppm(camera: &Camera, pixels: &Vec<f64>, mut writer: BufWriter<File>) {
-    let num_cols = camera.view_plane.res_width;
-    let num_rows = camera.view_plane.res_height;
-    writer.write(format!("P3\n{} {}\n255\n", num_cols, num_rows).as_bytes()).unwrap();
-    for p in pixels {
-        let p = ((*p) * 255.0) as isize;
-        let r = p;
-        let g = p;
-        let b = p;
-        let s = format!("{} {} {}\n", r, g, b);
-        writer.write(s.as_bytes()).unwrap();
-    }
-    writer.flush().unwrap();
-}
+
 
 fn main() {
     create_dir_all(OUTPUT_FOLDER).unwrap();
@@ -115,20 +102,19 @@ fn main() {
 
     // println!("{:?}", triangles.len());
 
-    let mut camera = Camera::new();
+    let mut scene = Scene::new(triangles);
 
     let now = Instant::now();
     let mut prev_elapsed = 0.0;
     for i in 0..6 {
-        let pixel_brightnesses = camera.iterate_over_rays(&triangles);
-
         let f = File::create(format!("{}/test{}.ppm", OUTPUT_FOLDER, i)).expect("Unable to create file");
         let f = BufWriter::new(f);
 
-        write_pixels_to_ppm(&camera, &pixel_brightnesses, f);
+        scene.render_to_output(f);
 
-        // camera.pos.dz -= 1.0;
-        camera.pitch.0 += 0.1;
+        // scene.camera.pos.dz -= 1.0;
+        scene.camera.pitch.0 += 0.1;
+
         let elapsed = now.elapsed().as_secs_f64();
         println!("Finished image {} in {:.3} s", i, elapsed - prev_elapsed);
         prev_elapsed = elapsed;
@@ -220,6 +206,58 @@ struct ViewPlane {
     res_height: usize,
 }
 
+/// A set of triangles together make up a scene that can be viewed by a camera.
+struct Scene {
+    camera: Camera,
+    triangles: Vec<Triangle>,
+    triangle_planes: Vec<Plane>,
+    bounding_boxes: Vec<BoundingBox>,
+}
+
+impl Scene {
+    fn new(triangles: Vec<Triangle>) -> Scene {
+        // Find the corresponding plane for every triangle
+        let triangle_planes: Vec<Plane> = triangles
+            .iter()
+            .map(|t| t.plane())
+            .collect();
+
+        // Find the bounding box for every triangle
+        let bounding_boxes: Vec<BoundingBox> = triangles
+            .iter()
+            .map(|t| t.bounding_box())
+            .collect();
+
+        Scene {
+            camera: Camera::new(),
+            triangles,
+            triangle_planes,
+            bounding_boxes,
+        }
+    }
+
+    /// Generate an image of the given scene.
+    fn iterate_over_rays(&self) -> Vec<f64> {
+        self.camera.iterate_over_rays(&self.triangles, &self.triangle_planes, &self.bounding_boxes)
+    }
+
+    fn render_to_output(&self, mut writer: BufWriter<File>) {
+        let pixels = self.iterate_over_rays();
+
+        let num_cols = self.camera.view_plane.res_width;
+        let num_rows = self.camera.view_plane.res_height;
+        writer.write(format!("P3\n{} {}\n255\n", num_cols, num_rows).as_bytes()).unwrap();
+        for p in pixels {
+            let p = ((*p) * 255.0) as isize;
+            let r = p;
+            let g = p;
+            let b = p;
+            let s = format!("{} {} {}\n", r, g, b);
+            writer.write(s.as_bytes()).unwrap();
+        }
+        writer.flush().unwrap();
+    }
+}
 
 /// A camera, determined by position, pitch angle, yaw angle, and view plane.
 /// TODO: roll angle?
@@ -249,18 +287,9 @@ impl Camera {
         Camera { pos, pitch, yaw, view_plane }
     }
 
-    fn iterate_over_rays(&self, triangles: &Vec<Triangle>) -> Vec<f64> {
-
-        // Find the corresponding plane for every triangle
-        let triangle_planes: Vec<Plane> = triangles
-            .iter()
-            .map(|t| t.plane())
-            .collect();
-
-        let bounding_boxes: Vec<BoundingBox> = triangles
-                .iter()
-                .map(|t| t.bounding_box())
-                .collect();
+    /// Given a list of triangles and their corresponding planes and bounding boxes,
+    /// calculate the rendering of a scene.
+    fn iterate_over_rays(&self, triangles: &Vec<Triangle>, triangle_planes: &Vec<Plane>, bounding_boxes: &Vec<BoundingBox>) -> Vec<f64> {
 
         let vp = &self.view_plane;
         let res_height = vp.res_height as isize;
