@@ -181,9 +181,9 @@ struct BoundingBox {
 impl BoundingBox {
     /// Determine if a vector intersects this bounding box.
     fn intersects(&self, v: Vector) -> bool {
-        v.dx > self.min_x && v.dx < self.max_x
-        && v.dy > self.min_y && v.dy < self.max_y
-        && v.dz > self.min_z && v.dz < self.max_z
+        v.dx >= self.min_x && v.dx <= self.max_x
+        && v.dy >= self.min_y && v.dy <= self.max_y
+        && v.dz >= self.min_z && v.dz <= self.max_z
     }
 }
 
