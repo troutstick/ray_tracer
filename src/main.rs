@@ -6,7 +6,6 @@ use std::io;
 use std::time::Instant;
 use std::env::args;
 
-const IMAGES_FOLDER: &str = "./images";
 const OUTPUT_FOLDER: &str = "./images/output";
 const INPUT_FOLDER: &str = "./images/input";
 
@@ -18,6 +17,7 @@ fn denormalize(f: f64) -> i32 {
     (f * 255.99) as i32
 }
 
+#[allow(dead_code)]
 fn write_ppm_file(mut writer: BufWriter<File>) {
     let num_cols = 200;
     let num_rows = 100;
@@ -33,8 +33,6 @@ fn write_ppm_file(mut writer: BufWriter<File>) {
     }
     writer.flush().unwrap();
 }
-
-
 
 fn main() {
     let args: Vec<String> = args().collect();
@@ -120,7 +118,7 @@ fn main() {
         }
     };
 
-    let mut triangles: Vec<Triangle> = faces
+    let triangles: Vec<Triangle> = faces
         .iter()
         .map(get_vertices)
         .collect();
