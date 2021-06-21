@@ -3,6 +3,7 @@ use std::io::{BufWriter, Write, BufRead};
 use std::ops::{Sub, Add};
 use std::path::Path;
 use std::io;
+use std::time::Instant;
 
 const IMAGES_FOLDER: &str = "./images";
 const OUTPUT_FOLDER: &str = "./images/output";
@@ -115,6 +116,9 @@ fn main() {
     // println!("{:?}", triangles.len());
 
     let mut camera = Camera::new();
+
+    let now = Instant::now();
+    let mut prev_elapsed = 0.0;
     for i in 0..6 {
         let pixel_brightnesses = camera.iterate_over_rays(&triangles);
 
@@ -125,8 +129,12 @@ fn main() {
 
         // camera.pos.dz -= 1.0;
         camera.pitch.0 += 0.1;
+        let elapsed = now.elapsed().as_secs_f64();
+        println!("Finished image {} in {:.3} s", i, elapsed - prev_elapsed);
+        prev_elapsed = elapsed;
     }
-    println!();
+    println!("Time to render images: {:.3} s", now.elapsed().as_secs_f64());
+
 }
 
 fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
@@ -296,7 +304,6 @@ impl Camera {
                             && Vector::same_side(intersect, t.v2, t.v1, t.v3)
                             && Vector::same_side(intersect, t.v3, t.v1, t.v2) {
                             min_dist_sq = new_dist_sq;
-                            print!(".");
                         }
                     }
                 }
