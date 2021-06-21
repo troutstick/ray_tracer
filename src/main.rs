@@ -60,68 +60,12 @@ fn main() {
     let input_path = format!("{}/{}.obj", INPUT_FOLDER, input_filename);
 
     println!("Processing `{}`...", input_path);
-    let mut vertex_coords = Vec::new();
-    let mut faces = Vec::new();
 
-    if let Ok(lines) = read_lines(input_path) {
-        for line in lines {
-            if let Ok(s) = line {
-                let mut line_iter = s.split_ascii_whitespace();
-                if let Some(first_word) = line_iter.next() {
-                    match first_word {
-                        "v" => {
-                            let coords: Vec<f64> = line_iter
-                                .map(|s| s.parse::<f64>().unwrap())
-                                .collect();
-                            if coords.len() != 3 {
-                                panic!("unable to parse non 3d coordinates");
-                            }
-                            vertex_coords.push(coords);
-                        },
-                        "f" => {
-                            let vertices: Vec<usize> = line_iter
-                                .map(|s| s.parse::<usize>().unwrap())
-                                .map(|i| i-1) // normalize into 0 index
-                                .collect();
-                            if vertices.len() != 3 {
-                                panic!("unable to parse non-triangle polygons");
-                            }
-                            faces.push(vertices);
-                        },
-                        "#" => (), // ignore comment line
-                        _ => panic!("only v and f lines readable in `.obj` files"),
-                    }
-                }
-            }
-        }
+    let triangles = if let Ok(lines) = read_lines(input_path) {
+        parse_input(lines)
     } else {
-        println!("Failed to parse path. Did you enter a valid filename?");
-        return
-    }
-
-    // println!("{:?}", vertex_coords);
-    // println!("{:?}", faces);
-
-    let get_3d_vect = |coord: &Vec<f64>| -> Vector {
-        Vector {
-            dx: coord[0],
-            dy: coord[1],
-            dz: coord[2],
-        }
+        panic!("Failed to parse path. Did you enter a valid filename?");
     };
-
-    let get_vertices = |face: &Vec<usize>| -> Triangle {
-        Triangle {
-            v1: get_3d_vect(&vertex_coords[face[0]]),
-            v2: get_3d_vect(&vertex_coords[face[1]]),
-            v3: get_3d_vect(&vertex_coords[face[2]]),
-        }
-    };
-
-    let triangles: Vec<Triangle> = faces
-        .iter()
-        .map(get_vertices)
-        .collect();
 
     println!("num triangles: {:?}", triangles.len());
 
@@ -145,6 +89,60 @@ fn main() {
     }
     println!("Time to render images: {:.3} s", now.elapsed().as_secs_f64());
 
+}
+
+/// Parse the input into a set of triangles to render.
+fn parse_input(lines: io::Lines<io::BufReader<File>>) -> Vec<Triangle> {
+    let mut vertex_coords = Vec::new();
+    let mut faces = Vec::new();
+    for line in lines {
+        if let Ok(s) = line {
+            let mut line_iter = s.split_ascii_whitespace();
+            if let Some(first_word) = line_iter.next() {
+                match first_word {
+                    "v" => {
+                        let coords: Vec<f64> = line_iter
+                            .map(|s| s.parse::<f64>().unwrap())
+                            .collect();
+                        if coords.len() != 3 {
+                            panic!("unable to parse non 3d coordinates");
+                        }
+                        vertex_coords.push(coords);
+                    },
+                    "f" => {
+                        let vertices: Vec<usize> = line_iter
+                            .map(|s| s.parse::<usize>().unwrap())
+                            .map(|i| i-1) // normalize into 0 index
+                            .collect();
+                        if vertices.len() != 3 {
+                            panic!("unable to parse non-triangle polygons");
+                        }
+                        faces.push(vertices);
+                    },
+                    "#" => (), // ignore comment line
+                    _ => panic!("only v and f lines readable in `.obj` files"),
+                }
+            }
+        }
+    }
+
+    let get_3d_vect = |coord: &Vec<f64>| -> Vector {
+        Vector::new(coord[0], coord[1], coord[2])
+    };
+
+    let get_vertices = |face: &Vec<usize>| -> Triangle {
+        let v1 = get_3d_vect(&vertex_coords[face[0]]);
+        let v2 = get_3d_vect(&vertex_coords[face[1]]);
+        let v3 = get_3d_vect(&vertex_coords[face[2]]);
+        Triangle::new(v1, v2, v3)
+    };
+
+    let triangles: Vec<Triangle> = faces
+        .iter()
+        .map(get_vertices)
+        .collect();
+
+    triangles
 }
 
 fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
