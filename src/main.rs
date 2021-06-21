@@ -1,3 +1,4 @@
+use rayon::prelude::*;
 use std::fs::{File, create_dir_all};
 use std::io::{BufWriter, Write, BufRead};
 use std::ops::{Sub, Add};
@@ -482,6 +483,7 @@ impl Camera {
         };
 
         let brightnesses = (0..(res_height*res_width))
+            .into_par_iter()
             .map(get_ray_direction)
             .map(get_brightness)
             .collect();
@@ -493,7 +495,9 @@ impl Camera {
     /// Uses an externally defined closure to find intersection information.
     #[inline]
     fn closest_triangle_dist(&self, scene: &Scene, get_intersection: &dyn Fn(&Plane) -> Vector) -> f64 {
-        let triangle_iter = scene.triangle_planes.iter().zip(scene.bounding_boxes.iter().zip(scene.triangles.iter()));
+        let triangle_iter = scene.triangle_planes.iter()
+            .zip(scene.bounding_boxes.iter()
+            .zip(scene.triangles.iter()));
 
         let intersect_map = |(plane,(bbox, t))| {
             let intersect = get_intersection(plane);
