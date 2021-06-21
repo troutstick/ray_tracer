@@ -464,8 +464,8 @@ impl Camera {
     
                         let intersect = get_intersection(plane);
     
-                        // squared distance from origin
-                        let new_dist_sq = intersect.squared_magnitude();
+                        // squared distance from camera
+                        let new_dist_sq = (self.pos - intersect).squared_magnitude();
     
                         if new_dist_sq < min_dist_sq // only look at closest triangle (no transparent triangles)
                             && bounding_box.fast_intersect_check(intersect) // fast initial check
@@ -478,7 +478,7 @@ impl Camera {
                     pixel_brightness.push(if min_dist_sq == f64::INFINITY {
                             DEFAULT_BRIGHT
                         } else {
-                            1.0 / min_dist_sq.sqrt()
+                            5.0 / min_dist_sq.sqrt()
                         });
                 } else {
                     pixel_brightness.push(DEFAULT_BRIGHT);
