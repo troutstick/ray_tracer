@@ -13,27 +13,9 @@ const INPUT_FOLDER: &str = "./images/input";
 /// The default brightness of empty space.
 const DEFAULT_BRIGHT: f64 = 0.1;
 
-/// Convert a 0 to 1 decimal input to a 0 to 255 integer output.
-fn denormalize(f: f64) -> i32 {
-    (f * 255.99) as i32
-}
-
-#[allow(dead_code)]
-fn write_ppm_file(mut writer: BufWriter<File>) {
-    let num_cols = 200;
-    let num_rows = 100;
-    writer.write(format!("P3\n{} {}\n255\n", num_cols, num_rows).as_bytes()).unwrap();
-    for row in (0..num_rows).rev() {
-        for col in 0..num_cols {
-            let r = (col as f64) / (num_cols as f64);
-            let g = (row as f64) / (num_rows as f64);
-            let b = 0.2;
-            let s = format!("{} {} {}\n", denormalize(r), denormalize(g), denormalize(b));
-            writer.write(s.as_bytes()).unwrap();
-        }
-    }
-    writer.flush().unwrap();
-}
+const CAMERA_PIXEL_SIZE: f64 = 0.005;
+const CAMERA_VERTICAL_RESOLUTION: usize = 200;
+const CAMERA_HORIZONTAL_RESOLUTION: usize = 200;
 
 fn main() {
     let args: Vec<String> = args().collect();
@@ -420,9 +402,9 @@ impl Camera {
         let pitch = Radian(0.0);
         let yaw = Radian(0.0);
         let view_plane = ViewPlane {
-            pixel_size: 0.005,
-            res_height: 200,
-            res_width: 200,
+            pixel_size: CAMERA_PIXEL_SIZE,
+            res_height: CAMERA_VERTICAL_RESOLUTION,
+            res_width: CAMERA_HORIZONTAL_RESOLUTION,
         };
 
         Camera { pos, pitch, yaw, view_plane }
@@ -649,6 +631,28 @@ impl Add for Vector {
             dz: self.dz + other.dz,
         }
     }
+}
+
+/// Convert a 0 to 1 decimal input to a 0 to 255 integer output.
+fn denormalize(f: f64) -> i32 {
+    (f * 255.99) as i32
+}
+
+#[allow(dead_code)]
+fn write_ppm_file(mut writer: BufWriter<File>) {
+    let num_cols = 200;
+    let num_rows = 100;
+    writer.write(format!("P3\n{} {}\n255\n", num_cols, num_rows).as_bytes()).unwrap();
+    for row in (0..num_rows).rev() {
+        for col in 0..num_cols {
+            let r = (col as f64) / (num_cols as f64);
+            let g = (row as f64) / (num_rows as f64);
+            let b = 0.2;
+            let s = format!("{} {} {}\n", denormalize(r), denormalize(g), denormalize(b));
+            writer.write(s.as_bytes()).unwrap();
+        }
+    }
+    writer.flush().unwrap();
 }
 
 #[test]
