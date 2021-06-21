@@ -8,6 +8,9 @@ const IMAGES_FOLDER: &str = "./images";
 const OUTPUT_FOLDER: &str = "./images/output";
 const INPUT_FOLDER: &str = "./images/input";
 
+/// The default brightness of empty space.
+const DEFAULT_BRIGHT: f64 = 0.1;
+
 /// Convert a 0 to 1 decimal input to a 0 to 255 integer output.
 fn denormalize(f: f64) -> i32 {
     (f * 255.99) as i32
@@ -104,7 +107,7 @@ fn main() {
         }
     };
 
-    let triangles: Vec<Triangle> = faces
+    let mut triangles: Vec<Triangle> = faces
         .iter()
         .map(get_vertices)
         .collect();
@@ -120,8 +123,10 @@ fn main() {
 
         write_pixels_to_ppm(&camera, &pixel_brightnesses, f);
 
+        // camera.pos.dz -= 1.0;
         camera.pitch.0 += 0.1;
     }
+    println!();
 }
 
 fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
@@ -224,11 +229,11 @@ impl Camera {
         // let pitch = Radian(1.104793);
         // let yaw = Radian(0.8150688);
 
-        let pos = Vector::new(0.0, 0.0, -10.0);
-        let pitch = Radian(0.1);
+        let pos = Vector::new(0.1, 0.0, -10.0);
+        let pitch = Radian(0.0);
         let yaw = Radian(0.0);
         let view_plane = ViewPlane {
-            pixel_size: 0.0025,
+            pixel_size: 0.005,
             res_height: 200,
             res_width: 200,
         };
@@ -250,16 +255,16 @@ impl Camera {
                 .collect();
 
         let vp = &self.view_plane;
-        let res_height = vp.res_height;
-        let res_width = vp.res_width;
+        let res_height = vp.res_height as isize;
+        let res_width = vp.res_width as isize;
 
         // Get index of center pixel
         let i_center = ((res_width - 1) / 2) as isize;
         let j_center = ((res_height - 1) / 2) as isize;
 
-        let mut flattened_brightnesses = Vec::with_capacity(res_height * res_width);
-        for i in 0..res_width as isize {
-            for j in 0..res_height as isize {
+        let mut flattened_brightnesses = Vec::with_capacity(vp.res_height * vp.res_width);
+        for j in (0isize..res_height).rev() {
+            for i in 0isize..res_width {
                 // direction of ray
                 let m = Vector {
                     dx: vp.pixel_size * ((i - i_center) as f64),
@@ -299,7 +304,7 @@ impl Camera {
                 // add brightness to pixel
                 flattened_brightnesses.push(
                     if min_dist_sq == f64::INFINITY {
-                            0.0
+                            DEFAULT_BRIGHT
                         } else {
                             1.0 / min_dist_sq.sqrt()
                         }
