@@ -248,7 +248,7 @@ impl Scene {
         let num_rows = self.camera.view_plane.res_height;
         writer.write(format!("P3\n{} {}\n255\n", num_cols, num_rows).as_bytes()).unwrap();
         for p in pixels {
-            let p = ((*p) * 255.0) as isize;
+            let p = (p * 255.0) as isize;
             let r = p;
             let g = p;
             let b = p;
