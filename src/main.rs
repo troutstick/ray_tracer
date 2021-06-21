@@ -217,7 +217,7 @@ struct BoundingBox {
 impl BoundingBox {
     /// Determine if a vector intersects this bounding box.
     #[inline]
-    fn fast_intersect_check(&self, v: Vector) -> bool {
+    fn fast_intersect_check(&self, v: &Vector) -> bool {
         v.dx >= self.min_x && v.dx <= self.max_x
         && v.dy >= self.min_y && v.dy <= self.max_y
         && v.dz >= self.min_z && v.dz <= self.max_z
@@ -443,7 +443,7 @@ impl Camera {
         let i_center = ((res_width - 1) / 2) as isize;
         let j_center = ((res_height - 1) / 2) as isize;
 
-        let mut pixel_brightness = Vec::with_capacity(vp.res_height * vp.res_width);
+        let mut pixel_brightnesses = Vec::with_capacity(vp.res_height * vp.res_width);
 
         for j in (0isize..res_height).rev() {
             for i in 0isize..res_width {
@@ -455,47 +455,54 @@ impl Camera {
                     dz: 1.0,
                 }.yaw(self.yaw).pitch(self.pitch);
 
-                
-
                 let get_intersection = |p: &Plane| { p.intersection(self.pos, m) };
                 
                 let intersects_bounding_box = scene.box_planes.iter()
                     .map(get_intersection)
-                    .map(|v| scene.scene_bounding_box.fast_intersect_check(v))
+                    .map(|v| scene.scene_bounding_box.fast_intersect_check(&v))
                     .any(|x| x);
 
+                let brightness = if intersects_bounding_box {
+                    // Iterate over all triangles and find the distance to the closest triangle
+                    // which passes the intersect check
+                    let closest_dist = {
+                        let triangle_iter = scene.triangle_planes.iter().zip(scene.bounding_boxes.iter().zip(scene.triangles.iter()));
 
-                if intersects_bounding_box {
-                    // initialize distance of triangle to infinity
-                    let mut min_dist_sq = f64::INFINITY;
-    
-                    // filter for all triangles that the ray intersects
-                    for (plane, (bounding_box, t)) in scene.triangle_planes.iter().zip(scene.bounding_boxes.iter().zip(scene.triangles.iter())) {
-    
-                        let intersect = get_intersection(plane);
-    
-                        // squared distance from camera
-                        let new_dist_sq = (self.pos - intersect).squared_magnitude();
-    
-                        if new_dist_sq < min_dist_sq // only look at closest triangle (no transparent triangles)
-                            && bounding_box.fast_intersect_check(intersect) // fast initial check
-                            && intersect.slow_intersect_check(t) { // final accurate check
-                            min_dist_sq = new_dist_sq;
-                        }
-                    }
+                        let intersect_map = |(plane,(bbox, t))| {
+                            let intersect = get_intersection(plane);
+                            (intersect,(bbox, t))
+                        };
+                        let in_bounding_box = |(intersect,(bbox, _t)): &(Vector, (&BoundingBox, &Triangle))| {
+                            bbox.fast_intersect_check(intersect)
+                        };
+                        let in_triangle = |(intersect,(_bbox, t)): &(Vector, (&BoundingBox, &Triangle))| {
+                            intersect.slow_intersect_check(t)  
+                        };
+                        let get_intersect_dist_sq = |(intersect,(_bbox, _t)): (Vector, (&BoundingBox, &Triangle))| {
+                            intersect.squared_magnitude()
+                        };
+                        triangle_iter
+                            .map(intersect_map)
+                            .filter(in_bounding_box)
+                            .filter(in_triangle)
+                            .map(get_intersect_dist_sq)
+                            .fold(f64::INFINITY, |a, b| a.min(b))
+                            .sqrt()
+                    };
     
                     // brightness of pixel corresponds to how far away shape is
-                    pixel_brightness.push(if min_dist_sq == f64::INFINITY {
-                            DEFAULT_BRIGHT
-                        } else {
-                            5.0 / min_dist_sq.sqrt()
-                        });
+                    if closest_dist == f64::INFINITY {
+                        DEFAULT_BRIGHT
+                    } else {
+                        1.0 / closest_dist
+                    }
                 } else {
-                    pixel_brightness.push(DEFAULT_BRIGHT);
-                }
+                    DEFAULT_BRIGHT
+                };
+                pixel_brightnesses.push(brightness);
             }
         }
-        pixel_brightness
+        pixel_brightnesses
     }
 }
 
