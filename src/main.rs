@@ -162,6 +162,10 @@ struct Triangle {
 }
 
 impl Triangle {
+    fn new(v1: Vector, v2: Vector, v3: Vector) -> Triangle {
+        Triangle { v1, v2, v3 }
+    }
+
     /// Give the plane that the triangle intersects.
     fn plane(&self) -> Plane {
         // Calculate normal vector from cross product of two sides
@@ -210,6 +214,45 @@ impl BoundingBox {
         && v.dy >= self.min_y && v.dy <= self.max_y
         && v.dz >= self.min_z && v.dz <= self.max_z
     }
+
+    /// Give the six planes that make up the box's sides.
+    ///
+    /// A diagram of each of the vertices:
+    ///
+    ///       ^ Z-axis
+    ///       |
+    ///       |          
+    ///       +-v2-----+ v4
+    ///      /|       /|
+    ///     / |      / |
+    ///    +-v6-----+ v8
+    ///    |  |     |  | 
+    ///    |  +-----|--+----> Y-axis
+    ///    | / v1   | / v3
+    ///    |/       |/
+    ///    +--------+
+    ///   / v5       v7
+    ///  /
+    /// L  X-axis
+    fn box_planes(&self) -> [Plane; 6] {
+        
+        let v1 = Vector::new(self.min_x, self.min_y, self.min_z);
+        let v2 = Vector::new(self.min_x, self.min_y, self.max_z);
+        // let v3 = Vector::new(self.min_x, self.max_y, self.min_z); // v3 skipped
+        let v4 = Vector::new(self.min_x, self.max_y, self.max_z);
+        let v5 = Vector::new(self.max_x, self.min_y, self.min_z);
+        let v6 = Vector::new(self.max_x, self.min_y, self.max_z);
+        let v7 = Vector::new(self.max_x, self.max_y, self.min_z);
+        let v8 = Vector::new(self.max_x, self.max_y, self.max_z);
+        [
+            Triangle::new(v2, v6, v4).plane(), // top plane
+            Triangle::new(v5, v1, v7).plane(), // bottom plane
+            Triangle::new(v8, v4, v7).plane(), // right plane
+            Triangle::new(v2, v6, v5).plane(), // left plane
+            Triangle::new(v7, v6, v5).plane(), // near plane
+            Triangle::new(v2, v1, v4).plane(), // far plane
+        ]
+    }
 }
 
 /// A plane in 3d space; all points satisfy the equation:
@@ -219,6 +262,19 @@ struct Plane {
     b: f64,
     c: f64,
     k: f64,
+}
+
+impl Plane {
+    /// Return the intersection between this plane and a ray,
+    /// defined by an origin and a direction vector.
+    #[inline]
+    fn intersection(&self, origin: Vector, direction: Vector) -> Vector {
+        // deconstruct plane
+        let (a,b,c,k) = (self.a, self.b, self.c, self.k);
+        let abc_vect = Vector::new(a,b,c);
+        let lambda = -(abc_vect.dot_product(origin) + k) / abc_vect.dot_product(direction);
+        direction.scale(lambda) + origin
+    }
 }
 
 /// A view plane for a camera. The view plane is situated 1.0 units away from the camera.
@@ -237,6 +293,11 @@ struct Scene {
     triangles: Vec<Triangle>,
     triangle_planes: Vec<Plane>,
     bounding_boxes: Vec<BoundingBox>,
+
+    /// All triangles in the scene fall within this bounding box.
+    scene_bounding_box: BoundingBox,
+    /// The six planes of the bounding box.
+    box_planes: [Plane; 6],
 }
 
 impl Scene {
@@ -253,17 +314,40 @@ impl Scene {
             .map(|t| t.bounding_box())
             .collect();
 
+
+        let scene_bounding_box = {
+            let mut min_x = f64::INFINITY;
+            let mut max_x = f64::NEG_INFINITY;
+            let mut min_y = f64::INFINITY;
+            let mut max_y = f64::NEG_INFINITY;
+            let mut min_z = f64::INFINITY;
+            let mut max_z = f64::NEG_INFINITY;
+            for b in &bounding_boxes {
+                min_x = b.min_x.min(min_x);
+                max_x = b.max_x.max(max_x);
+                min_y = b.min_y.min(min_y);
+                max_y = b.max_y.max(max_y);
+                min_z = b.min_z.min(min_z);
+                max_z = b.max_z.max(max_z);
+            }
+            BoundingBox { min_x, max_x, min_y, max_y, min_z, max_z }
+        };
+
+        let box_planes = scene_bounding_box.box_planes();
+
         Scene {
             camera: Camera::new(),
             triangles,
             triangle_planes,
             bounding_boxes,
+            scene_bounding_box,
+            box_planes,
         }
     }
 
     /// Generate an image of the given scene.
     fn iterate_over_rays(&self) -> Vec<f64> {
-        self.camera.iterate_over_rays(&self.triangles, &self.triangle_planes, &self.bounding_boxes)
+        self.camera.iterate_over_rays(&self)
     }
 
     fn render_to_output(&self, mut writer: BufWriter<File>) {
@@ -314,7 +398,7 @@ impl Camera {
 
     /// Given a list of triangles and their corresponding planes and bounding boxes,
     /// calculate the rendering of a scene.
-    fn iterate_over_rays(&self, triangles: &Vec<Triangle>, triangle_planes: &Vec<Plane>, bounding_boxes: &Vec<BoundingBox>) -> Vec<f64> {
+    fn iterate_over_rays(&self, scene: &Scene) -> Vec<f64> {
 
         let vp = &self.view_plane;
         let res_height = vp.res_height as isize;
@@ -328,44 +412,52 @@ impl Camera {
 
         for j in (0isize..res_height).rev() {
             for i in 0isize..res_width {
-                // direction of ray
+                // The direction of the ray denoted by m.
+                // The origin is the camera position.
                 let m = Vector {
                     dx: vp.pixel_size * ((i - i_center) as f64),
                     dy: vp.pixel_size * ((j - j_center) as f64),
                     dz: 1.0,
                 }.yaw(self.yaw).pitch(self.pitch);
 
-                // initialize distance of triangle to infinity
-                let mut min_dist_sq = f64::INFINITY;
+                
 
-                // filter for all triangles that the ray intersects
-                for (plane, (bounding_box, t)) in triangle_planes.iter().zip(bounding_boxes.iter().zip(triangles.iter())) {
+                let get_intersection = |p: &Plane| { p.intersection(self.pos, m) };
+                
+                let intersects_bounding_box = scene.box_planes.iter()
+                    .map(get_intersection)
+                    .map(|v| scene.scene_bounding_box.fast_intersect_check(v))
+                    .any(|x| x);
+                    
 
-                    let intersect = {
-                        // deconstruct plane
-                        let (a,b,c,k) = (plane.a, plane.b, plane.c, plane.k);
-                        let abc_vect = Vector::new(a,b,c);
-                        let lambda = -(abc_vect.dot_product(self.pos) + k) / abc_vect.dot_product(m);
-                        m.scale(lambda) + self.pos
-                    };
-
-
-                    // squared distance from origin
-                    let new_dist_sq = intersect.squared_magnitude();
-
-                    if new_dist_sq < min_dist_sq // only look at closest triangle (no transparent triangles)
-                        && bounding_box.fast_intersect_check(intersect) // fast initial check
-                        && intersect.slow_intersect_check(t) { // final accurate check
-                        min_dist_sq = new_dist_sq;
+                if intersects_bounding_box {
+                    // initialize distance of triangle to infinity
+                    let mut min_dist_sq = f64::INFINITY;
+    
+                    // filter for all triangles that the ray intersects
+                    for (plane, (bounding_box, t)) in scene.triangle_planes.iter().zip(scene.bounding_boxes.iter().zip(scene.triangles.iter())) {
+    
+                        let intersect = get_intersection(plane);
+    
+                        // squared distance from origin
+                        let new_dist_sq = intersect.squared_magnitude();
+    
+                        if new_dist_sq < min_dist_sq // only look at closest triangle (no transparent triangles)
+                            && bounding_box.fast_intersect_check(intersect) // fast initial check
+                            && intersect.slow_intersect_check(t) { // final accurate check
+                            min_dist_sq = new_dist_sq;
+                        }
                     }
+    
+                    // brightness of pixel corresponds to how far away shape is
+                    pixel_brightness.push(if min_dist_sq == f64::INFINITY {
+                            DEFAULT_BRIGHT
+                        } else {
+                            1.0 / min_dist_sq.sqrt()
+                        });
+                } else {
+                    pixel_brightness.push(DEFAULT_BRIGHT);
                 }
-
-                // brightness of pixel corresponds to how far away shape is
-                pixel_brightness.push(if min_dist_sq == f64::INFINITY {
-                        DEFAULT_BRIGHT
-                    } else {
-                        1.0 / min_dist_sq.sqrt()
-                    });
             }
         }
         pixel_brightness
@@ -377,7 +469,10 @@ impl Camera {
 struct Radian(f64);
 
 impl Radian {
+    #[inline]
     fn sin(&self) -> f64 { self.0.sin() }
+    
+    #[inline]
     fn cos(&self) -> f64 { self.0.cos() }
 }
 
@@ -395,6 +490,7 @@ impl Vector {
     }
 
     /// Calculate the cross product vector
+    #[inline]
     fn cross_product(&self, other: Self) -> Self {
         Vector {
             dx: self.dy * other.dz - self.dz * other.dy,
@@ -404,6 +500,7 @@ impl Vector {
     }
 
     /// Calculate the dot product scalar.
+    #[inline]
     fn dot_product(&self, other: Self) -> f64 {
         self.dx * other.dx +
         self.dy * other.dy +
@@ -411,6 +508,7 @@ impl Vector {
     }
 
     /// Pitch the vector by r radians.
+    #[inline]
     fn pitch(&self, r: Radian) -> Vector {
         Vector {
             dx: self.dx,
@@ -420,6 +518,7 @@ impl Vector {
     }
 
     /// Yaw the vector by r radians.
+    #[inline]
     fn yaw(&self, r: Radian) -> Vector {
         Vector {
             dx: self.dx * r.cos() + self.dz * r.sin(),
@@ -429,6 +528,7 @@ impl Vector {
     }
 
     /// Scale the vector by some scalar value n.
+    #[inline]
     fn scale(&self, n: f64) -> Vector {
         Vector {
             dx: n * self.dx,
@@ -437,10 +537,12 @@ impl Vector {
         }
     }
 
+    #[inline]
     fn squared_magnitude(&self) -> f64 {
         self.dx.powi(2) + self.dy.powi(2) + self.dz.powi(2)
     }
 
+    #[inline]
     fn magnitude(&self) -> f64 {
         self.squared_magnitude().sqrt()
     }
@@ -468,6 +570,7 @@ impl Vector {
 impl Sub for Vector {
     type Output = Self;
 
+    #[inline]
     fn sub(self, other: Self) -> Self {
         Vector {
             dx: self.dx - other.dx,
@@ -480,6 +583,7 @@ impl Sub for Vector {
 impl Add for Vector {
     type Output = Self;
 
+    #[inline]
     fn add(self, other: Self) -> Self {
         Vector {
             dx: self.dx + other.dx,
