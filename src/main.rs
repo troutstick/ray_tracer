@@ -180,7 +180,8 @@ struct BoundingBox {
 
 impl BoundingBox {
     /// Determine if a vector intersects this bounding box.
-    fn intersects(&self, v: Vector) -> bool {
+    #[inline]
+    fn fast_intersect_check(&self, v: Vector) -> bool {
         v.dx >= self.min_x && v.dx <= self.max_x
         && v.dy >= self.min_y && v.dy <= self.max_y
         && v.dz >= self.min_z && v.dz <= self.max_z
@@ -299,7 +300,8 @@ impl Camera {
         let i_center = ((res_width - 1) / 2) as isize;
         let j_center = ((res_height - 1) / 2) as isize;
 
-        let mut flattened_brightnesses = Vec::with_capacity(vp.res_height * vp.res_width);
+        let mut pixel_brightness = Vec::with_capacity(vp.res_height * vp.res_width);
+
         for j in (0isize..res_height).rev() {
             for i in 0isize..res_width {
                 // direction of ray
@@ -324,30 +326,25 @@ impl Camera {
                     };
 
 
-                    // NOT actual magnitude
+                    // squared distance from origin
                     let new_dist_sq = intersect.squared_magnitude();
 
-                    if new_dist_sq < min_dist_sq { // only look at closest triangle (no transparency)
-                        if bounding_box.intersects(intersect) // fast initial check
-                            && Vector::same_side(intersect, t.v1, t.v2, t.v3)
-                            && Vector::same_side(intersect, t.v2, t.v1, t.v3)
-                            && Vector::same_side(intersect, t.v3, t.v1, t.v2) {
-                            min_dist_sq = new_dist_sq;
-                        }
+                    if new_dist_sq < min_dist_sq // only look at closest triangle (no transparent triangles)
+                        && bounding_box.fast_intersect_check(intersect) // fast initial check
+                        && intersect.slow_intersect_check(t) { // final accurate check
+                        min_dist_sq = new_dist_sq;
                     }
                 }
 
-                // add brightness to pixel
-                flattened_brightnesses.push(
-                    if min_dist_sq == f64::INFINITY {
-                            DEFAULT_BRIGHT
-                        } else {
-                            1.0 / min_dist_sq.sqrt()
-                        }
-                );
+                // brightness of pixel corresponds to how far away shape is
+                pixel_brightness.push(if min_dist_sq == f64::INFINITY {
+                        DEFAULT_BRIGHT
+                    } else {
+                        1.0 / min_dist_sq.sqrt()
+                    });
             }
         }
-        flattened_brightnesses
+        pixel_brightness
     }
 }
 
@@ -424,12 +421,23 @@ impl Vector {
         self.squared_magnitude().sqrt()
     }
 
-    /// Return true if p1 and p2 are both on the same side of v1 -> v2.
+    /// Return true if p1 and p2 are both on the same side of the vector v1 -> v2.
+    #[inline]
     fn same_side(p1: Vector, p2: Vector, v1: Vector, v2: Vector) -> bool {
         let v = v2 - v1;
         let a = v.cross_product(p1 - v2);
         let b = v.cross_product(p2 - v2);
         a.dot_product(b) > 0.0
+    }
+
+    /// Determine if a vector is bounded within a triangle t.
+    /// Note: This function is relatively slow; use bounding boxes
+    /// for a fast intial intersection check.
+    #[inline]
+    fn slow_intersect_check(&self, t: &Triangle) -> bool {
+        Vector::same_side(*self, t.v1, t.v2, t.v3)
+        && Vector::same_side(*self, t.v2, t.v1, t.v3)
+        && Vector::same_side(*self, t.v3, t.v1, t.v2)
     }
 }
 
