@@ -443,7 +443,7 @@ impl Camera {
         let i_center = ((res_width - 1) / 2) as isize;
         let j_center = ((res_height - 1) / 2) as isize;
 
-        let mut pixel_brightnesses = Vec::with_capacity(vp.res_height * vp.res_width);
+        // let mut pixel_brightnesses = Vec::with_capacity(vp.res_height * vp.res_width);
 
         let get_ray_direction = |pixel_index| {
             // pixel horizontal dimension
@@ -465,43 +465,21 @@ impl Camera {
         let ray_directions = (0..(res_height*res_width))
             .map(get_ray_direction);
 
-        for direction in ray_directions {
-            // Determine if a given plane intersects the ray
-            let get_intersection = |p: &Plane| { p.intersection(self.pos, direction) };
-                
-            let intersects_bounding_box = scene.box_planes.iter()
-                .map(get_intersection)
+
+        // Return true if a direction vector strikes a triangle's bounding box
+        let intersects_bounding_box = |direction| {
+            scene.box_planes.iter()
+                .map(|p| p.intersection(self.pos, direction))
                 .map(|v| scene.scene_bounding_box.fast_intersect_check(&v))
-                .any(|x| x);
+                .any(|x| x)
+        };
 
-            let brightness = if intersects_bounding_box {
-                // Iterate over all triangles and find the distance to the closest triangle
-                // which passes the intersect check
-                let closest_dist = {
-                    let triangle_iter = scene.triangle_planes.iter().zip(scene.bounding_boxes.iter().zip(scene.triangles.iter()));
+        let get_brightness = |direction| {
+            let get_intersection = |p: &Plane| p.intersection(self.pos, direction);
 
-                    let intersect_map = |(plane,(bbox, t))| {
-                        let intersect = get_intersection(plane);
-                        (intersect,(bbox, t))
-                    };
-                    let in_bounding_box = |(intersect,(bbox, _t)): &(Vector, (&BoundingBox, &Triangle))| {
-                        bbox.fast_intersect_check(intersect)
-                    };
-                    let in_triangle = |(intersect,(_bbox, t)): &(Vector, (&BoundingBox, &Triangle))| {
-                        intersect.slow_intersect_check(t)  
-                    };
-                    let get_intersect_dist_sq = |(intersect,(_bbox, _t)): (Vector, (&BoundingBox, &Triangle))| {
-                        intersect.squared_magnitude()
-                    };
-                    triangle_iter
-                        .map(intersect_map)
-                        .filter(in_bounding_box)
-                        .filter(in_triangle)
-                        .map(get_intersect_dist_sq)
-                        .fold(f64::INFINITY, |a, b| a.min(b))
-                        .sqrt()
-                };
-
+            if intersects_bounding_box(direction) {
+                let closest_dist = self.closest_triangle_dist(scene, &get_intersection);
+    
                 // brightness of pixel corresponds to how far away shape is
                 if closest_dist == f64::INFINITY {
                     DEFAULT_BRIGHT
@@ -510,10 +488,66 @@ impl Camera {
                 }
             } else {
                 DEFAULT_BRIGHT
-            };
-            pixel_brightnesses.push(brightness);
-        }
-        pixel_brightnesses
+            }
+        };
+
+        ray_directions.map(get_brightness).collect()
+
+
+        // for direction in ray_directions {
+        //     // Determine if a given plane intersects the ray
+        //     let get_intersection = |p: &Plane| { p.intersection(self.pos, direction) };
+                
+        //     let intersects_bounding_box = scene.box_planes.iter()
+        //         .map(get_intersection)
+        //         .map(|v| scene.scene_bounding_box.fast_intersect_check(&v))
+        //         .any(|x| x);
+
+        //     let brightness = if intersects_bounding_box {
+        //         // Iterate over all triangles and find the distance to the closest triangle
+        //         // which passes the intersect check
+        //         let closest_dist = self.closest_triangle_dist(scene, &get_intersection);
+
+        //         // brightness of pixel corresponds to how far away shape is
+        //         if closest_dist == f64::INFINITY {
+        //             DEFAULT_BRIGHT
+        //         } else {
+        //             1.0 / closest_dist
+        //         }
+        //     } else {
+        //         DEFAULT_BRIGHT
+        //     };
+        //     pixel_brightnesses.push(brightness);
+        // }
+        // pixel_brightnesses
+    }
+
+    /// Find the distance to the closest triangle that intersects a ray.
+    /// Uses an externally defined closure to find intersection information.
+    #[inline]
+    fn closest_triangle_dist(&self, scene: &Scene, get_intersection: &dyn Fn(&Plane) -> Vector) -> f64 {
+        let triangle_iter = scene.triangle_planes.iter().zip(scene.bounding_boxes.iter().zip(scene.triangles.iter()));
+
+        let intersect_map = |(plane,(bbox, t))| {
+            let intersect = get_intersection(plane);
+            (intersect,(bbox, t))
+        };
+        let in_bounding_box = |(intersect,(bbox, _t)): &(Vector, (&BoundingBox, &Triangle))| {
+            bbox.fast_intersect_check(intersect)
+        };
+        let in_triangle = |(intersect,(_bbox, t)): &(Vector, (&BoundingBox, &Triangle))| {
+            intersect.slow_intersect_check(t)  
+        };
+        let get_intersect_dist_sq = |(intersect,(_bbox, _t)): (Vector, (&BoundingBox, &Triangle))| {
+            intersect.squared_magnitude()
+        };
+        triangle_iter
+            .map(intersect_map)
+            .filter(in_bounding_box)
+            .filter(in_triangle)
+            .map(get_intersect_dist_sq)
+            .fold(f64::INFINITY, |a, b| a.min(b))
+            .sqrt()
     }
 }
 
