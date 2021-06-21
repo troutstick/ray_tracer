@@ -3,6 +3,9 @@
 
 output="./images/output"
 
+echo "Exporting images..."
+
+shopt -s nullglob
 for filename in $output/*.ppm
 do
   filename=$(basename -- "$filename")

@@ -4,6 +4,7 @@ use std::ops::{Sub, Add};
 use std::path::Path;
 use std::io;
 use std::time::Instant;
+use std::env::args;
 
 const IMAGES_FOLDER: &str = "./images";
 const OUTPUT_FOLDER: &str = "./images/output";
@@ -36,11 +37,31 @@ fn write_ppm_file(mut writer: BufWriter<File>) {
 
 
 fn main() {
+    let args: Vec<String> = args().collect();
+    
+    let input_filename = match args.len() {
+        1 => "teapot",
+        2 | 3 => args[1].as_str(),
+        _ => "wrong number of args provided",
+    };
+
+    let num_output_images = if args.len() >= 3 {
+        let n = args[2].parse::<usize>()
+            .expect("Second arg should be number of output images");
+        if n == 0 {
+            panic!("must have nonzero output");
+        }
+        n
+    } else {
+        6
+    };
+
     create_dir_all(OUTPUT_FOLDER).unwrap();
     create_dir_all(INPUT_FOLDER).unwrap();
 
-    let input_path = format!("{}/teapot.obj", INPUT_FOLDER);
+    let input_path = format!("{}/{}.obj", INPUT_FOLDER, input_filename);
 
+    println!("Processing `{}`...", input_path);
     let mut vertex_coords = Vec::new();
     let mut faces = Vec::new();
 
@@ -69,11 +90,15 @@ fn main() {
                             }
                             faces.push(vertices);
                         },
+                        "#" => (), // ignore comment line
                         _ => panic!("only v and f lines readable in `.obj` files"),
                     }
                 }
             }
         }
+    } else {
+        println!("Failed to parse path. Did you enter a valid filename?");
+        return
     }
 
     // println!("{:?}", vertex_coords);
@@ -100,20 +125,21 @@ fn main() {
         .map(get_vertices)
         .collect();
 
-    // println!("{:?}", triangles.len());
+    println!("num triangles: {:?}", triangles.len());
 
     let mut scene = Scene::new(triangles);
 
     let now = Instant::now();
     let mut prev_elapsed = 0.0;
-    for i in 0..6 {
-        let f = File::create(format!("{}/test{}.ppm", OUTPUT_FOLDER, i)).expect("Unable to create file");
+    for i in 0..num_output_images {
+        let f = File::create(format!("{}/{}_{}.ppm", OUTPUT_FOLDER, input_filename, i))
+            .expect("Unable to create file");
         let f = BufWriter::new(f);
 
         scene.render_to_output(f);
 
-        // scene.camera.pos.dz -= 1.0;
-        scene.camera.pitch.0 += 0.1;
+        scene.camera.pos.dz -= 1.0;
+        // scene.camera.pitch.0 += 0.1;
 
         let elapsed = now.elapsed().as_secs_f64();
         println!("Finished image {} in {:.3} s", i, elapsed - prev_elapsed);
