@@ -11,11 +11,21 @@ const OUTPUT_FOLDER: &str = "./images/output";
 const INPUT_FOLDER: &str = "./images/input";
 
 /// The default color of empty space.
-const DEFAULT_COLOR: Color = Color::new(25, 25, 25);
+const DEFAULT_BACKGROUND_COLOR: Color = Color::new(25, 25, 25);
+
+/// The default color of darkness.
+const DEFAULT_SHADOW_COLOR: Color = Color::new(0, 0, 0);
 
 const CAMERA_PIXEL_SIZE: f64 = 0.005;
 const CAMERA_VERTICAL_RESOLUTION: usize = 200;
 const CAMERA_HORIZONTAL_RESOLUTION: usize = 200;
+const CAMERA_POSITION: Vector = Vector::new(0.1, 4.0, -10.0);
+const CAMERA_PITCH: Radian = Radian(-0.25);
+const CAMERA_YAW: Radian = Radian(0.05);
+
+/// Parameters for sunlight.
+const DEFAULT_LIGHTING_ANGLE: Vector = Vector::new(-0.5, 0.9, 0.4);
+const DEFAULT_LIGHT_COLOR: Color = Color::white();
 
 fn main() {
     let args: Vec<String> = args().collect();
@@ -63,8 +73,8 @@ fn main() {
 
         scene.render_to_output(f);
 
-        scene.camera.pos.dz -= 1.0;
-        // scene.camera.pitch.0 += 0.1;
+        // scene.camera.pos.dz -= 1.0;
+        scene.camera.yaw.0 += 0.1;
 
         let elapsed = now.elapsed().as_secs_f64();
         println!("Finished image {} in {:.3} s", i, elapsed - prev_elapsed);
@@ -284,13 +294,14 @@ struct Plane {
 impl Plane {
     /// Return the intersection between this plane and a ray,
     /// defined by an origin and a direction vector.
+    /// Also return whether the intersection occurs behind the origin.
     #[inline]
-    fn intersection(&self, origin: Vector, direction: Vector) -> Vector {
+    fn intersection(&self, origin: Vector, direction: Vector) -> (Vector, bool) {
         // deconstruct plane
         let (_a,_b,_c,k) = (self.a, self.b, self.c, self.k);
         let normal_vect = self.normal();
         let lambda = -(normal_vect.dot_product(origin) + k) / normal_vect.dot_product(direction);
-        direction.scale(lambda) + origin
+        (direction.scale(lambda) + origin, lambda > 0.0)
     }
 
     #[inline]
@@ -338,6 +349,15 @@ struct Color {
 impl Color {
     const fn white() -> Color {
         Color { r: 255, g: 255, b: 255 }
+    }
+    const fn red() -> Color {
+        Color { r: 255, g: 0, b: 0 }
+    }
+    const fn blue() -> Color {
+        Color { r: 0, g: 0, b: 255 }
+    }
+    const fn green() -> Color {
+        Color { r: 0, g: 255, b: 0 }
     }
 
     const fn new(r: u8, g: u8, b: u8) -> Color {
@@ -403,13 +423,7 @@ impl Scene {
 
         let box_planes = scene_bounding_box.box_planes();
 
-        let sunlight = {
-            let angle = Vector::new(0.0, 0.0, -1.0)
-                .pitch(Radian(2.0))
-                .yaw(Radian(3.0));
-            let color = Color::white();
-            Sunlight::new(angle, color)
-        };
+        let sunlight = Sunlight::new(DEFAULT_LIGHTING_ANGLE, DEFAULT_LIGHT_COLOR);
 
         Scene {
             camera: Camera::new(),
@@ -453,9 +467,9 @@ struct Camera {
 impl Camera {
     /// Default camera.
     fn new() -> Camera {
-        let pos = Vector::new(0.1, 0.0, -10.0);
-        let pitch = Radian(0.0);
-        let yaw = Radian(0.0);
+        let pos = CAMERA_POSITION;
+        let pitch = CAMERA_PITCH;
+        let yaw = CAMERA_YAW;
         let view_plane = ViewPlane {
             pixel_size: CAMERA_PIXEL_SIZE,
             res_height: CAMERA_VERTICAL_RESOLUTION,
@@ -502,7 +516,7 @@ impl Camera {
             let intersects_bounding_box = |_direction| {
                 scene.box_planes.iter()
                     .map(get_intersection)
-                    .map(|v| scene.scene_bounding_box.fast_intersect_check(&v))
+                    .map(|(v, _is_behind)| scene.scene_bounding_box.fast_intersect_check(&v))
                     .any(|x| x)
             };
             if intersects_bounding_box(direction) {    
@@ -512,15 +526,22 @@ impl Camera {
             }
         };
 
-        let get_color = |t_index| {
-            match t_index {
-                Some(i) => {
-                    let plane: &Plane = &scene.triangle_planes[i];
-                    let normal_vector = plane.normal();
-                    let brightness = normal_vector.dot_product(scene.sunlight.angle);
-                    scene.sunlight.color.scale(brightness)
+        let get_color = |option| {
+            match option {
+                Some((i, intersect)) => {
+
+                    let get_intersection = |p: &Plane| p.intersection(intersect, scene.sunlight.angle);
+
+                    if self.intersects_triangle(scene, &get_intersection, i) {
+                        DEFAULT_SHADOW_COLOR
+                    } else {
+                        let plane: &Plane = &scene.triangle_planes[i];
+                        let normal_vector = plane.normal();
+                        let brightness = normal_vector.dot_product(scene.sunlight.angle);
+                        scene.sunlight.color.scale(brightness)
+                    }
                 },
-                None => DEFAULT_COLOR,
+                None => DEFAULT_BACKGROUND_COLOR,
             }
         };
 
@@ -534,11 +555,42 @@ impl Camera {
         pixel_colors
     }
 
-    /// Find the index of closest triangle that intersects a ray.
+    /// Return true if a ray defined in an intersection detection closure
+    /// collides with a triangle.
+    /// Excludes one triangle.
     #[inline]
-    fn closest_triangle_index(&self, scene: &Scene, get_intersection: &dyn Fn(&Plane) -> Vector) -> Option<usize> {
+    fn intersects_triangle(&self, scene: &Scene, get_intersection: &dyn Fn(&Plane) -> (Vector, bool), to_exclude: usize) -> bool {
+        let intersect_map = |(index, plane)| -> Option<(usize, Vector)> {
+            let (intersect, is_ahead) = get_intersection(plane);
+            if is_ahead {
+                Some((index, intersect))
+            } else {
+                None
+            }
+        };
+        let in_bounding_box = |(index, intersect): &(usize, Vector)| {
+            let bbox = &scene.bounding_boxes[*index];
+            // skip the excluded triangle in check
+            *index != to_exclude && bbox.fast_intersect_check(&intersect)
+        };
+        let intersects_t = |(index, intersect): (usize, Vector)| {
+            let t = &scene.triangles[index];
+            intersect.slow_intersect_check(t)
+        };
+
+        scene.triangle_planes.iter().enumerate()
+            .map(intersect_map)
+            .filter_map(|x|x)
+            .filter(in_bounding_box)
+            .any(intersects_t)
+    }
+
+    /// Find the index of closest triangle that intersects a ray,
+    /// and the associated intersection point.
+    #[inline]
+    fn closest_triangle_index(&self, scene: &Scene, get_intersection: &dyn Fn(&Plane) -> (Vector, bool)) -> Option<(usize, Vector)> {
         let intersect_map = |(index, plane)| -> (usize, Vector) {
-            (index, get_intersection(plane))
+            (index, get_intersection(plane).0)
         };
         let in_bounding_box = |(index, intersect): &(usize, Vector)| {
             let bbox = &scene.bounding_boxes[*index];
@@ -548,13 +600,13 @@ impl Camera {
             let t = &scene.triangles[index];
             if intersect.slow_intersect_check(t) {
                 let cam_to_triangle = intersect - self.pos;
-                (index, cam_to_triangle.squared_magnitude())
+                (index, cam_to_triangle.squared_magnitude(), intersect)
             } else {
-                (0, f64::INFINITY)
+                (0, f64::INFINITY, intersect)
             }
 
         };
-        let min_dist = |tuple1: (usize, f64), tuple2: (usize, f64)| {
+        let min_dist = |tuple1: (usize, f64, Vector), tuple2: (usize, f64, Vector)| {
             if tuple1.1 < tuple2.1 {
                 tuple1
             } else {
@@ -562,14 +614,14 @@ impl Camera {
             }
         };
 
-        let (index, dist) = scene.triangle_planes.iter().enumerate()
+        let (index, dist, intersect) = scene.triangle_planes.iter().enumerate()
             .map(intersect_map)
             .filter(in_bounding_box)
             .map(dist_from_camera)
-            .fold((usize::MAX, f64::INFINITY), min_dist);
+            .fold((usize::MAX, f64::INFINITY, Vector::zero()), min_dist);
 
         if dist != f64::INFINITY {
-            Some(index)
+            Some((index, intersect))
         } else {
             None
         }
@@ -627,7 +679,11 @@ struct Vector {
 }
 
 impl Vector {
-    fn new(dx: f64, dy: f64, dz: f64) -> Vector {
+    const fn zero() -> Vector {
+        Vector { dx: 0.0, dy: 0.0, dz: 0.0 }
+    }
+
+    const fn new(dx: f64, dy: f64, dz: f64) -> Vector {
         Vector { dx, dy, dz }
     }
 
