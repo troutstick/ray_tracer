@@ -164,7 +164,7 @@ impl Triangle {
             let v1 = self.v1 - self.v2;
             let v2 = self.v1 - self.v3;
             v1.cross_product(v2)
-        };
+        }.normalized();
 
         // calculate offset
         Plane {
