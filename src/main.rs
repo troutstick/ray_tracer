@@ -16,12 +16,15 @@ const DEFAULT_BACKGROUND_COLOR: Color = Color::new(25, 25, 25);
 /// The default color of darkness.
 const DEFAULT_SHADOW_COLOR: Color = Color::new(0, 0, 0);
 
-const CAMERA_PIXEL_SIZE: f64 = 0.005;
-const CAMERA_VERTICAL_RESOLUTION: usize = 200;
-const CAMERA_HORIZONTAL_RESOLUTION: usize = 200;
+/// Scale the image resolution up/down with this.
+const CAMERA_RES_SCALE: usize = 1;
+
+const CAMERA_PIXEL_SIZE: f64 = 0.005 / CAMERA_RES_SCALE as f64;
+const CAMERA_VERTICAL_RESOLUTION: usize = 200 * CAMERA_RES_SCALE;
+const CAMERA_HORIZONTAL_RESOLUTION: usize = 200 * CAMERA_RES_SCALE;
 const CAMERA_POSITION: Vector = Vector::new(0.1, 4.0, -10.0);
 const CAMERA_PITCH: Radian = Radian(-0.25);
-const CAMERA_YAW: Radian = Radian(0.05);
+const CAMERA_YAW: Radian = Radian(0.01);
 
 /// Parameters for sunlight.
 const DEFAULT_LIGHTING_ANGLE: Vector = Vector::new(-0.5, 0.9, 0.4);
@@ -545,12 +548,13 @@ impl Camera {
             }
         };
 
-        let pixel_colors = (0..(res_height*res_width))
+        let mut pixel_colors = Vec::with_capacity(vp.res_height*vp.res_width);
+        (0..(res_height*res_width))
             .into_par_iter()
             .map(get_ray_direction)
             .map(get_triangle_index)
             .map(get_color)
-            .collect();
+            .collect_into_vec(&mut pixel_colors);
 
         pixel_colors
     }
