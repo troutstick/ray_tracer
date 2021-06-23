@@ -10,8 +10,8 @@ use std::env::args;
 const OUTPUT_FOLDER: &str = "./images/output";
 const INPUT_FOLDER: &str = "./images/input";
 
-/// The default brightness of empty space.
-const DEFAULT_BRIGHT: f64 = 0.1;
+/// The default color of empty space.
+const DEFAULT_COLOR: Color = Color::new(25, 25, 25);
 
 const CAMERA_PIXEL_SIZE: f64 = 0.005;
 const CAMERA_VERTICAL_RESOLUTION: usize = 200;
@@ -287,10 +287,16 @@ impl Plane {
     #[inline]
     fn intersection(&self, origin: Vector, direction: Vector) -> Vector {
         // deconstruct plane
-        let (a,b,c,k) = (self.a, self.b, self.c, self.k);
-        let abc_vect = Vector::new(a,b,c);
-        let lambda = -(abc_vect.dot_product(origin) + k) / abc_vect.dot_product(direction);
+        let (_a,_b,_c,k) = (self.a, self.b, self.c, self.k);
+        let normal_vect = self.normal();
+        let lambda = -(normal_vect.dot_product(origin) + k) / normal_vect.dot_product(direction);
         direction.scale(lambda) + origin
+    }
+
+    #[inline]
+    fn normal(&self) -> Vector {
+        let (a,b,c,_k) = (self.a, self.b, self.c, self.k);
+        Vector::new(a,b,c)
     }
 }
 
@@ -302,6 +308,49 @@ struct ViewPlane {
     res_width: usize,
     /// How many pixels tall a view is.
     res_height: usize,
+}
+
+/// Representation of light coming in from a faraway source;
+/// i.e. all incoming light enters at the same angle.
+/// The angle vector should be a unit vector.
+struct Sunlight {
+    angle: Vector,
+    color: Color,
+}
+
+impl Sunlight {
+    fn new(angle: Vector, color: Color) -> Sunlight {
+        Sunlight {
+            angle: angle.normalized(),
+            color,
+        }
+    }
+}
+
+/// The color (and brightness) of light.
+/// RGB is in a 0-255 scale.
+struct Color {
+    r: u8,
+    g: u8,
+    b: u8,
+}
+
+impl Color {
+    const fn white() -> Color {
+        Color { r: 255, g: 255, b: 255 }
+    }
+
+    const fn new(r: u8, g: u8, b: u8) -> Color {
+        Color { r, g, b }
+    }
+
+    fn scale(&self, scalar: f64) -> Color {
+        Color {
+            r: ((self.r as f64) * scalar) as u8,
+            g: ((self.g as f64) * scalar) as u8,
+            b: ((self.b as f64) * scalar) as u8,
+        }
+    }
 }
 
 /// A set of triangles together make up a scene that can be viewed by a camera.
@@ -316,6 +365,8 @@ struct Scene {
     /// The six planes of the bounding box:
     /// [top bottom left right near far]
     box_planes: [Plane; 6],
+
+    sunlight: Sunlight,
 }
 
 impl Scene {
@@ -331,7 +382,6 @@ impl Scene {
             .iter()
             .map(|t| t.bounding_box())
             .collect();
-
 
         let scene_bounding_box = {
             let mut min_x = f64::INFINITY;
@@ -353,6 +403,14 @@ impl Scene {
 
         let box_planes = scene_bounding_box.box_planes();
 
+        let sunlight = {
+            let angle = Vector::new(0.0, 0.0, -1.0)
+                .pitch(Radian(2.0))
+                .yaw(Radian(3.0));
+            let color = Color::white();
+            Sunlight::new(angle, color)
+        };
+
         Scene {
             camera: Camera::new(),
             triangles,
@@ -360,11 +418,12 @@ impl Scene {
             bounding_boxes,
             scene_bounding_box,
             box_planes,
+            sunlight,
         }
     }
 
     /// Generate an image of the given scene.
-    fn iterate_over_rays(&self) -> Vec<f64> {
+    fn iterate_over_rays(&self) -> Vec<Color> {
         self.camera.iterate_over_rays(&self)
     }
 
@@ -375,11 +434,7 @@ impl Scene {
         let num_rows = self.camera.view_plane.res_height;
         writer.write(format!("P3\n{} {}\n255\n", num_cols, num_rows).as_bytes()).unwrap();
         for p in pixels {
-            let p = (p * 255.0) as isize;
-            let r = p;
-            let g = p;
-            let b = p;
-            let s = format!("{} {} {}\n", r, g, b);
+            let s = format!("{} {} {}\n", p.r, p.g, p.b);
             writer.write(s.as_bytes()).unwrap();
         }
         writer.flush().unwrap();
@@ -412,7 +467,7 @@ impl Camera {
 
     /// Given a list of triangles and their corresponding planes and bounding boxes,
     /// calculate the rendering of a scene.
-    fn iterate_over_rays(&self, scene: &Scene) -> Vec<f64> {
+    fn iterate_over_rays(&self, scene: &Scene) -> Vec<Color> {
 
         let vp = &self.view_plane;
         let res_height = vp.res_height as isize;
@@ -439,8 +494,8 @@ impl Camera {
             m
         };
 
-        // Get the brightness of the pixel associated with a ray drawn towards direction.
-        let get_brightness = |direction| {
+        // Get the index of the first triangle the ray strikes.
+        let get_triangle_index = |direction| {
             let get_intersection = |p: &Plane| p.intersection(self.pos, direction);
 
             // Return true if a direction vector strikes the scene's bounding box
@@ -450,27 +505,74 @@ impl Camera {
                     .map(|v| scene.scene_bounding_box.fast_intersect_check(&v))
                     .any(|x| x)
             };
-            if intersects_bounding_box(direction) {
-                let closest_dist = self.closest_triangle_dist(scene, &get_intersection);
-    
-                // brightness of pixel corresponds to how far away shape is
-                if closest_dist == f64::INFINITY {
-                    DEFAULT_BRIGHT
-                } else {
-                    1.0 / closest_dist
-                }
+            if intersects_bounding_box(direction) {    
+                self.closest_triangle_index(scene, &get_intersection)
             } else {
-                DEFAULT_BRIGHT
+                None
             }
         };
 
-        let brightnesses = (0..(res_height*res_width))
+        let get_color = |t_index| {
+            match t_index {
+                Some(i) => {
+                    let plane: &Plane = &scene.triangle_planes[i];
+                    let normal_vector = plane.normal();
+                    let brightness = normal_vector.dot_product(scene.sunlight.angle);
+                    scene.sunlight.color.scale(brightness)
+                },
+                None => DEFAULT_COLOR,
+            }
+        };
+
+        let pixel_colors = (0..(res_height*res_width))
             .into_par_iter()
             .map(get_ray_direction)
-            .map(get_brightness)
+            .map(get_triangle_index)
+            .map(get_color)
             .collect();
 
-        brightnesses
+        pixel_colors
+    }
+
+    /// Find the index of closest triangle that intersects a ray.
+    #[inline]
+    fn closest_triangle_index(&self, scene: &Scene, get_intersection: &dyn Fn(&Plane) -> Vector) -> Option<usize> {
+        let intersect_map = |(index, plane)| -> (usize, Vector) {
+            (index, get_intersection(plane))
+        };
+        let in_bounding_box = |(index, intersect): &(usize, Vector)| {
+            let bbox = &scene.bounding_boxes[*index];
+            bbox.fast_intersect_check(&intersect)
+        };
+        let dist_from_camera = |(index, intersect): (usize, Vector)| {
+            let t = &scene.triangles[index];
+            if intersect.slow_intersect_check(t) {
+                let cam_to_triangle = intersect - self.pos;
+                (index, cam_to_triangle.squared_magnitude())
+            } else {
+                (0, f64::INFINITY)
+            }
+
+        };
+        let min_dist = |tuple1: (usize, f64), tuple2: (usize, f64)| {
+            if tuple1.1 < tuple2.1 {
+                tuple1
+            } else {
+                tuple2
+            }
+        };
+
+        let (index, dist) = scene.triangle_planes.iter().enumerate()
+            .map(intersect_map)
+            .filter(in_bounding_box)
+            .map(dist_from_camera)
+            .fold((usize::MAX, f64::INFINITY), min_dist);
+
+        if dist != f64::INFINITY {
+            Some(index)
+        } else {
+            None
+        }
     }
 
     /// Find the distance to the closest triangle that intersects a ray.
@@ -585,6 +687,16 @@ impl Vector {
     #[inline]
     fn magnitude(&self) -> f64 {
         self.squared_magnitude().sqrt()
+    }
+
+    #[inline]
+    fn normalized(&self) -> Vector {
+        let m = self.magnitude();
+        Vector {
+            dx: self.dx / m,
+            dy: self.dy / m,
+            dz: self.dz / m,
+        }
     }
 
     /// Return true if p1 and p2 are both on the same side of the vector v1 -> v2.
