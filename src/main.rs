@@ -443,7 +443,7 @@ impl Camera {
         let get_brightness = |direction| {
             let get_intersection = |p: &Plane| p.intersection(self.pos, direction);
 
-            // Return true if a direction vector strikes a triangle's bounding box
+            // Return true if a direction vector strikes the scene's bounding box
             let intersects_bounding_box = |_direction| {
                 scene.box_planes.iter()
                     .map(get_intersection)
