@@ -441,7 +441,79 @@ impl Scene {
 
     /// Generate an image of the given scene.
     fn iterate_over_rays(&self) -> Vec<Color> {
-        self.camera.iterate_over_rays(&self)
+        let cam = &self.camera;
+
+        let vp = &cam.view_plane;
+        let res_height = vp.res_height as isize;
+        let res_width = vp.res_width as isize;
+
+        // Get index of center pixel
+        let i_center = ((res_width - 1) / 2) as isize;
+        let j_center = ((res_height - 1) / 2) as isize;
+
+        let get_ray_direction = |pixel_index| {
+            // pixel horizontal dimension
+            let i = pixel_index % res_height;
+            // pixel vertical dimension
+            let j = (res_height * res_width - pixel_index - 1) / res_height;
+
+            // The direction of the ray denoted by m.
+            // The origin is the camera position.
+            let m = Vector {
+                dx: vp.pixel_size * ((i - i_center) as f64),
+                dy: vp.pixel_size * ((j - j_center) as f64),
+                dz: 1.0,
+            }.yaw(cam.yaw).pitch(cam.pitch);
+            
+            m
+        };
+
+        // Get the index of the first triangle the ray strikes.
+        let get_triangle_index = |direction| {
+            let get_intersection = |p: &Plane| p.intersection(cam.pos, direction);
+
+            // Return true if a direction vector strikes the scene's bounding box
+            let intersects_bounding_box = |_direction| {
+                self.box_planes.iter()
+                    .map(get_intersection)
+                    .map(|(v, _is_behind)| self.scene_bounding_box.fast_intersect_check(&v))
+                    .any(|x| x)
+            };
+            if intersects_bounding_box(direction) {    
+                self.closest_triangle_index(&get_intersection)
+            } else {
+                None
+            }
+        };
+
+        let get_color = |option| {
+            match option {
+                Some((i, intersect)) => {
+
+                    let get_intersection = |p: &Plane| p.intersection(intersect, self.sunlight.angle);
+
+                    if self.intersects_triangle(&get_intersection, i) {
+                        DEFAULT_SHADOW_COLOR
+                    } else {
+                        let plane: &Plane = &self.triangle_planes[i];
+                        let normal_vector = plane.normal();
+                        let brightness = normal_vector.dot_product(self.sunlight.angle);
+                        self.sunlight.color.scale(brightness)
+                    }
+                },
+                None => DEFAULT_BACKGROUND_COLOR,
+            }
+        };
+
+        let mut pixel_colors = Vec::with_capacity(vp.res_height*vp.res_width);
+        (0..(res_height*res_width))
+            .into_par_iter()
+            .map(get_ray_direction)
+            .map(get_triangle_index)
+            .map(get_color)
+            .collect_into_vec(&mut pixel_colors);
+
+        pixel_colors
     }
 
     fn render_to_output(&self, mut writer: BufWriter<File>) {
@@ -455,6 +527,108 @@ impl Scene {
             writer.write(s.as_bytes()).unwrap();
         }
         writer.flush().unwrap();
+    }
+
+        /// Return true if a ray defined in an intersection detection closure
+    /// collides with a triangle.
+    /// Excludes one triangle.
+    #[inline]
+    fn intersects_triangle(&self, get_intersection: &dyn Fn(&Plane) -> (Vector, bool), to_exclude: usize) -> bool {
+        let intersect_map = |(index, plane)| -> Option<(usize, Vector)> {
+            let (intersect, is_ahead) = get_intersection(plane);
+            if is_ahead {
+                Some((index, intersect))
+            } else {
+                None
+            }
+        };
+        let in_bounding_box = |(index, intersect): &(usize, Vector)| {
+            let bbox = &self.bounding_boxes[*index];
+            // skip the excluded triangle in check
+            *index != to_exclude && bbox.fast_intersect_check(&intersect)
+        };
+        let intersects_t = |(index, intersect): (usize, Vector)| {
+            let t = &self.triangles[index];
+            intersect.slow_intersect_check(t)
+        };
+
+        self.triangle_planes.iter().enumerate()
+            .map(intersect_map)
+            .filter_map(|x|x)
+            .filter(in_bounding_box)
+            .any(intersects_t)
+    }
+
+    /// Find the index of closest triangle that intersects a ray,
+    /// and the associated intersection point.
+    #[inline]
+    fn closest_triangle_index(&self, get_intersection: &dyn Fn(&Plane) -> (Vector, bool)) -> Option<(usize, Vector)> {
+        let intersect_map = |(index, plane)| -> (usize, Vector) {
+            (index, get_intersection(plane).0)
+        };
+        let in_bounding_box = |(index, intersect): &(usize, Vector)| {
+            let bbox = &self.bounding_boxes[*index];
+            bbox.fast_intersect_check(&intersect)
+        };
+        let dist_from_camera = |(index, intersect): (usize, Vector)| {
+            let t = &self.triangles[index];
+            if intersect.slow_intersect_check(t) {
+                let cam_to_triangle = intersect - self.camera.pos;
+                (index, cam_to_triangle.squared_magnitude(), intersect)
+            } else {
+                (0, f64::INFINITY, intersect)
+            }
+
+        };
+        let min_dist = |tuple1: (usize, f64, Vector), tuple2: (usize, f64, Vector)| {
+            if tuple1.1 < tuple2.1 {
+                tuple1
+            } else {
+                tuple2
+            }
+        };
+
+        let (index, dist, intersect) = self.triangle_planes.iter().enumerate()
+            .map(intersect_map)
+            .filter(in_bounding_box)
+            .map(dist_from_camera)
+            .fold((usize::MAX, f64::INFINITY, Vector::zero()), min_dist);
+
+        if dist != f64::INFINITY {
+            Some((index, intersect))
+        } else {
+            None
+        }
+    }
+
+    /// Find the distance to the closest triangle that intersects a ray.
+    /// Uses an externally defined closure to find intersection information.
+    #[inline]
+    fn closest_triangle_dist(&self, get_intersection: &dyn Fn(&Plane) -> Vector) -> f64 {
+        let triangle_iter = self.triangle_planes.iter()
+            .zip(self.bounding_boxes.iter()
+            .zip(self.triangles.iter()));
+
+        let intersect_map = |(plane,(bbox, t))| {
+            let intersect = get_intersection(plane);
+            (intersect,(bbox, t))
+        };
+        let in_bounding_box = |(intersect,(bbox, _t)): &(Vector, (&BoundingBox, &Triangle))| {
+            bbox.fast_intersect_check(intersect)
+        };
+        let in_triangle = |(intersect,(_bbox, t)): &(Vector, (&BoundingBox, &Triangle))| {
+            intersect.slow_intersect_check(t)  
+        };
+        let get_intersect_dist_sq = |(intersect,(_bbox, _t)): (Vector, (&BoundingBox, &Triangle))| {
+            intersect.squared_magnitude()
+        };
+        triangle_iter
+            .map(intersect_map)
+            .filter(in_bounding_box)
+            .filter(in_triangle)
+            .map(get_intersect_dist_sq)
+            .fold(f64::INFINITY, |a, b| a.min(b))
+            .sqrt()
     }
 }
 
@@ -480,185 +654,6 @@ impl Camera {
         };
 
         Camera { pos, pitch, yaw, view_plane }
-    }
-
-    /// Given a list of triangles and their corresponding planes and bounding boxes,
-    /// calculate the rendering of a scene.
-    fn iterate_over_rays(&self, scene: &Scene) -> Vec<Color> {
-
-        let vp = &self.view_plane;
-        let res_height = vp.res_height as isize;
-        let res_width = vp.res_width as isize;
-
-        // Get index of center pixel
-        let i_center = ((res_width - 1) / 2) as isize;
-        let j_center = ((res_height - 1) / 2) as isize;
-
-        let get_ray_direction = |pixel_index| {
-            // pixel horizontal dimension
-            let i = pixel_index % res_height;
-            // pixel vertical dimension
-            let j = (res_height * res_width - pixel_index - 1) / res_height;
-
-            // The direction of the ray denoted by m.
-            // The origin is the camera position.
-            let m = Vector {
-                dx: vp.pixel_size * ((i - i_center) as f64),
-                dy: vp.pixel_size * ((j - j_center) as f64),
-                dz: 1.0,
-            }.yaw(self.yaw).pitch(self.pitch);
-            
-            m
-        };
-
-        // Get the index of the first triangle the ray strikes.
-        let get_triangle_index = |direction| {
-            let get_intersection = |p: &Plane| p.intersection(self.pos, direction);
-
-            // Return true if a direction vector strikes the scene's bounding box
-            let intersects_bounding_box = |_direction| {
-                scene.box_planes.iter()
-                    .map(get_intersection)
-                    .map(|(v, _is_behind)| scene.scene_bounding_box.fast_intersect_check(&v))
-                    .any(|x| x)
-            };
-            if intersects_bounding_box(direction) {    
-                self.closest_triangle_index(scene, &get_intersection)
-            } else {
-                None
-            }
-        };
-
-        let get_color = |option| {
-            match option {
-                Some((i, intersect)) => {
-
-                    let get_intersection = |p: &Plane| p.intersection(intersect, scene.sunlight.angle);
-
-                    if self.intersects_triangle(scene, &get_intersection, i) {
-                        DEFAULT_SHADOW_COLOR
-                    } else {
-                        let plane: &Plane = &scene.triangle_planes[i];
-                        let normal_vector = plane.normal();
-                        let brightness = normal_vector.dot_product(scene.sunlight.angle);
-                        scene.sunlight.color.scale(brightness)
-                    }
-                },
-                None => DEFAULT_BACKGROUND_COLOR,
-            }
-        };
-
-        let mut pixel_colors = Vec::with_capacity(vp.res_height*vp.res_width);
-        (0..(res_height*res_width))
-            .into_par_iter()
-            .map(get_ray_direction)
-            .map(get_triangle_index)
-            .map(get_color)
-            .collect_into_vec(&mut pixel_colors);
-
-        pixel_colors
-    }
-
-    /// Return true if a ray defined in an intersection detection closure
-    /// collides with a triangle.
-    /// Excludes one triangle.
-    #[inline]
-    fn intersects_triangle(&self, scene: &Scene, get_intersection: &dyn Fn(&Plane) -> (Vector, bool), to_exclude: usize) -> bool {
-        let intersect_map = |(index, plane)| -> Option<(usize, Vector)> {
-            let (intersect, is_ahead) = get_intersection(plane);
-            if is_ahead {
-                Some((index, intersect))
-            } else {
-                None
-            }
-        };
-        let in_bounding_box = |(index, intersect): &(usize, Vector)| {
-            let bbox = &scene.bounding_boxes[*index];
-            // skip the excluded triangle in check
-            *index != to_exclude && bbox.fast_intersect_check(&intersect)
-        };
-        let intersects_t = |(index, intersect): (usize, Vector)| {
-            let t = &scene.triangles[index];
-            intersect.slow_intersect_check(t)
-        };
-
-        scene.triangle_planes.iter().enumerate()
-            .map(intersect_map)
-            .filter_map(|x|x)
-            .filter(in_bounding_box)
-            .any(intersects_t)
-    }
-
-    /// Find the index of closest triangle that intersects a ray,
-    /// and the associated intersection point.
-    #[inline]
-    fn closest_triangle_index(&self, scene: &Scene, get_intersection: &dyn Fn(&Plane) -> (Vector, bool)) -> Option<(usize, Vector)> {
-        let intersect_map = |(index, plane)| -> (usize, Vector) {
-            (index, get_intersection(plane).0)
-        };
-        let in_bounding_box = |(index, intersect): &(usize, Vector)| {
-            let bbox = &scene.bounding_boxes[*index];
-            bbox.fast_intersect_check(&intersect)
-        };
-        let dist_from_camera = |(index, intersect): (usize, Vector)| {
-            let t = &scene.triangles[index];
-            if intersect.slow_intersect_check(t) {
-                let cam_to_triangle = intersect - self.pos;
-                (index, cam_to_triangle.squared_magnitude(), intersect)
-            } else {
-                (0, f64::INFINITY, intersect)
-            }
-
-        };
-        let min_dist = |tuple1: (usize, f64, Vector), tuple2: (usize, f64, Vector)| {
-            if tuple1.1 < tuple2.1 {
-                tuple1
-            } else {
-                tuple2
-            }
-        };
-
-        let (index, dist, intersect) = scene.triangle_planes.iter().enumerate()
-            .map(intersect_map)
-            .filter(in_bounding_box)
-            .map(dist_from_camera)
-            .fold((usize::MAX, f64::INFINITY, Vector::zero()), min_dist);
-
-        if dist != f64::INFINITY {
-            Some((index, intersect))
-        } else {
-            None
-        }
-    }
-
-    /// Find the distance to the closest triangle that intersects a ray.
-    /// Uses an externally defined closure to find intersection information.
-    #[inline]
-    fn closest_triangle_dist(&self, scene: &Scene, get_intersection: &dyn Fn(&Plane) -> Vector) -> f64 {
-        let triangle_iter = scene.triangle_planes.iter()
-            .zip(scene.bounding_boxes.iter()
-            .zip(scene.triangles.iter()));
-
-        let intersect_map = |(plane,(bbox, t))| {
-            let intersect = get_intersection(plane);
-            (intersect,(bbox, t))
-        };
-        let in_bounding_box = |(intersect,(bbox, _t)): &(Vector, (&BoundingBox, &Triangle))| {
-            bbox.fast_intersect_check(intersect)
-        };
-        let in_triangle = |(intersect,(_bbox, t)): &(Vector, (&BoundingBox, &Triangle))| {
-            intersect.slow_intersect_check(t)  
-        };
-        let get_intersect_dist_sq = |(intersect,(_bbox, _t)): (Vector, (&BoundingBox, &Triangle))| {
-            intersect.squared_magnitude()
-        };
-        triangle_iter
-            .map(intersect_map)
-            .filter(in_bounding_box)
-            .filter(in_triangle)
-            .map(get_intersect_dist_sq)
-            .fold(f64::INFINITY, |a, b| a.min(b))
-            .sqrt()
     }
 }
 
