@@ -211,6 +211,19 @@ struct BoundingBox {
 }
 
 impl BoundingBox {
+
+    /// Determine if another box overlaps this one.
+    #[inline]
+    fn overlaps(&self, other: &Self) -> bool {
+
+        // Check if a 1d interval overlaps with another.
+        let interval_overlaps = |min1, max1, min2, max2| min1 <= max2 && min2 <= max1;
+
+        interval_overlaps(self.min_x, self.max_x, other.min_x, other.max_x)
+        && interval_overlaps(self.min_y, self.max_y, other.min_y, other.max_y)
+        && interval_overlaps(self.min_z, self.max_z, other.min_z, other.max_z)
+    }
+
     /// Determine if a vector intersects this bounding box.
     #[inline]
     fn fast_intersect_check(&self, v: &Vector) -> bool {
@@ -373,6 +386,43 @@ impl Color {
             g: ((self.g as f64) * scalar) as u8,
             b: ((self.b as f64) * scalar) as u8,
         }
+    }
+}
+
+/// A binary tree that allows efficient intersection search of the bounding boxes of a scene.
+struct BoundingBoxHierarchy {
+    boxes: Vec<BoundingBox>,
+}
+
+impl BoundingBoxHierarchy {
+    fn new(boxes: &Vec<BoundingBox>) -> BoundingBoxHierarchy {
+        let root = {
+            let mut min_x = f64::INFINITY;
+            let mut max_x = f64::NEG_INFINITY;
+            let mut min_y = f64::INFINITY;
+            let mut max_y = f64::NEG_INFINITY;
+            let mut min_z = f64::INFINITY;
+            let mut max_z = f64::NEG_INFINITY;
+            for b in boxes {
+                min_x = b.min_x.min(min_x);
+                max_x = b.max_x.max(max_x);
+                min_y = b.min_y.min(min_y);
+                max_y = b.max_y.max(max_y);
+                min_z = b.min_z.min(min_z);
+                max_z = b.max_z.max(max_z);
+            }
+            BoundingBox { min_x, max_x, min_y, max_y, min_z, max_z }
+        };
+
+        struct OctTreeNode {
+            // The dimensions of this node.
+            bounding_box: BoundingBox,
+
+            // The bounding box that it contains.
+            value: Option<BoundingBox>,
+        }
+
+
     }
 }
 
