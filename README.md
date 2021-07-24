@@ -21,7 +21,8 @@ Rust's iterators.
 
 ## Dependencies
 
-In addition to dependencies handled by `cargo`, this program relies on `eog` for exporting `.png`s. It is
+In addition to dependencies handled by `cargo`, this program relies on ImageMagick for exporting `.png` files,
+and on `eog` for displaying them. These additional tools are
 not an essential part of the program unless you utilize the related commands defined in the Makefile.
 
 This program was tested only for Linux machines.
